@@ -437,10 +437,19 @@
             position: relative;
         }
         
-        .period-subject {
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
+.period-subject {
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.no-subject-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #ff9800;
+    vertical-align: middle;
+}
         
 .period-teacher {
     font-size: 0.85rem;

@@ -381,7 +381,7 @@
             state.timetableData = {};
             let processedCount = 0;
             
-            if (state.excelFormat === 'teacher_wise') {
+            if (state.excelFormat === 'state_2025') {
                 processedCount = processStateTimetableWorkbook(workbook);
             } else {
                 // Process each sheet
@@ -398,6 +398,8 @@
             if (processedCount === 0) {
                 return;
             }
+            
+            assignTeacherIdsInTimetableData();
             
             // Save to localStorage
             saveTimetableToStorage();
@@ -420,6 +422,10 @@
             return String(value || '')
                 .replace(/\s+/g, ' ')
                 .trim();
+        }
+        
+        function safeLocaleCompare(a, b) {
+            return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
         }
         
         function normalizeClassSectionLabel(value) {
@@ -717,6 +723,53 @@
             return result;
         }
         
+        function assignTeacherIdsInTimetableData() {
+            if (!state.timetableData) return;
+            
+            const teacherIdMap = new Map();
+            const missingTeacherNames = new Set();
+            
+            Object.keys(state.timetableData).forEach(className => {
+                const classData = state.timetableData[className];
+                classData.days.forEach(day => {
+                    day.periods.forEach(period => {
+                        const teacherName = toCleanString(period.teacherName);
+                        const teacherId = String(period.teacherId || '').trim();
+                        if (!teacherName) return;
+                        
+                        if (teacherId) {
+                            teacherIdMap.set(teacherName, teacherId);
+                        } else if (!teacherIdMap.has(teacherName)) {
+                            missingTeacherNames.add(teacherName);
+                        }
+                    });
+                });
+            });
+            
+            Array.from(missingTeacherNames)
+                .sort((a, b) => safeLocaleCompare(a, b))
+                .forEach(name => {
+                    if (!teacherIdMap.has(name)) {
+                        teacherIdMap.set(name, `T${String(teacherIdMap.size + 1).padStart(3, '0')}`);
+                    }
+                });
+            
+            Object.keys(state.timetableData).forEach(className => {
+                const classData = state.timetableData[className];
+                classData.days.forEach(day => {
+                    day.periods.forEach(period => {
+                        const teacherName = toCleanString(period.teacherName);
+                        if (!teacherName) return;
+                        
+                        const teacherId = String(period.teacherId || '').trim();
+                        if (!teacherId) {
+                            period.teacherId = teacherIdMap.get(teacherName) || '';
+                        }
+                    });
+                });
+            });
+        }
+        
         // Open time input modal
         function openTimeInputModal(numPeriods) {
             const container = document.getElementById('timeInputContainer');
@@ -943,6 +996,8 @@
                     });
                 });
                 
+                assignTeacherIdsInTimetableData();
+                
                 // Save to localStorage
                 saveTimetableToStorage();
                 
@@ -999,7 +1054,7 @@
         }
         
         function normalizeSubjectName(subject) {
-            return (subject || '').trim().toLowerCase();
+            return toCleanString(subject).toLowerCase();
         }
         
         function escapeHtmlAttribute(value) {
@@ -1018,7 +1073,7 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        const label = (period.subject || '').trim();
+                        const label = toCleanString(period.subject);
                         const key = normalizeSubjectName(label);
                         if (key && !subjectMap.has(key)) {
                             subjectMap.set(key, label);
@@ -1037,6 +1092,10 @@
                 .filter(value => value && value.trim() !== '');
         }
         
+        function getNoSubjectIndicatorHtml() {
+            return '<span class="no-subject-indicator" title="No Subject" aria-label="No Subject"></span>';
+        }
+        
         // Update timetable summary
         function updateTimetableSummary() {
             if (!state.timetableData) return;
@@ -1050,10 +1109,18 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        if (period.subject && period.subject !== '') {
+                        const hasSubject = toCleanString(period.subject) !== '';
+                        const hasTeacher = toCleanString(period.teacherName) !== '';
+                        const hasTeacherId = !!(period.teacherId && String(period.teacherId).trim() !== '');
+                        
+                        if (hasSubject || hasTeacher || hasTeacherId) {
                             periodsCount++;
-                            if (period.teacherName) teachers.add(period.teacherName);
-                            if (period.subject) subjects.add(period.subject);
+                        }
+                        if (hasTeacher) {
+                            teachers.add(toCleanString(period.teacherName));
+                        }
+                        if (hasSubject) {
+                            subjects.add(toCleanString(period.subject));
                         }
                     });
                 });
@@ -1073,7 +1140,7 @@
             if (!state.timetableData) return;
             
             const classes = Object.keys(state.timetableData)
-                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a, b));
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');
@@ -1105,7 +1172,7 @@
                 });
             });
             const sortedTeachers = Array.from(teachers)
-                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a, b));
             
             const teacherFilter = document.getElementById('teacherFilter');
             const selectedTeachers = getMultiSelectValues('teacherFilter');
@@ -1129,7 +1196,7 @@
             subjectFilter.innerHTML = '';
             
             const uniqueSubjects = Array.from(getUniqueSubjectMap().entries())
-                .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a[1], b[1]));
             
             uniqueSubjects.forEach(([subjectKey, subjectLabel]) => {
                 const isSelected = selectedSubjects.includes(subjectKey) ? ' selected' : '';
@@ -1210,7 +1277,7 @@
             // Header row
             html += '<thead><tr><th>Day/Period</th>';
             for (let i = 1; i <= numPeriods; i++) {
-                const periodTime = (headerDay.periods[i - 1]?.time || '').trim();
+                const periodTime = toCleanString(headerDay.periods[i - 1]?.time);
                 const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
                 html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
                 if (showBreakAfterPeriod[i]) {
@@ -1232,8 +1299,8 @@
                 dayData.periods.forEach(period => {
                     // Check if this is a holiday
                     const isHoliday = isDateHoliday(dayName);
-                    const hasSubject = !!(period.subject && period.subject.trim() !== '');
-                    const hasTeacher = !!(period.teacherName && period.teacherName.trim() !== '');
+                    const hasSubject = toCleanString(period.subject) !== '';
+                    const hasTeacher = toCleanString(period.teacherName) !== '';
                     
                     if (!hasSubject && !hasTeacher) {
                         html += `<td class="break-cell">BREAK</td>`;
@@ -1247,7 +1314,7 @@
                             : '';
                         const subjectHtml = hasSubject
                             ? `<div class="period-subject">${period.subject}</div>`
-                            : '<div class="period-subject">No Subject</div>';
+                            : `<div class="period-subject">${getNoSubjectIndicatorHtml()}</div>`;
                         const teacherHtml = hasTeacher
                             ? `<div class="period-teacher">${period.teacherName}</div>`
                             : '<div class="period-teacher">No Teacher</div>';
@@ -1306,7 +1373,8 @@
                                 if (!teacherGrid[day.dayName][period.period]) teacherGrid[day.dayName][period.period] = [];
                                 teacherGrid[day.dayName][period.period].push({
                                     className,
-                                    subject: period.subject || 'No Subject'
+                                    subject: period.subject || '',
+                                    hasSubject: toCleanString(period.subject) !== ''
                                 });
                             }
                         });
@@ -1337,7 +1405,7 @@
                         
                         if (entries.length > 0) {
                             const periodText = entries.map(entry =>
-                                `${entry.className}: ${entry.subject}`
+                                `${entry.className}: ${entry.hasSubject ? entry.subject : getNoSubjectIndicatorHtml()}`
                             ).join('<br>');
                             
                             periodInfo = `
@@ -1771,7 +1839,8 @@
                     
                     dayData.periods.forEach(period => {
                         if (period.subject || period.teacherName || period.teacherId) {
-                            csv += `,${period.teacherId || ''}:${period.teacherName}:${period.subject}`;
+                            const teacherId = String(period.teacherId || '').trim();
+                            csv += `,${teacherId}:${period.teacherName}:${period.subject}`;
                         } else {
                             csv += ',';
                         }
