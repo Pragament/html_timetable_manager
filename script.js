@@ -874,6 +874,13 @@
             return subjectMap;
         }
         
+        function getMultiSelectValues(selectId) {
+            const select = document.getElementById(selectId);
+            return Array.from(select.selectedOptions)
+                .map(option => option.value)
+                .filter(value => value && value.trim() !== '');
+        }
+        
         // Update timetable summary
         function updateTimetableSummary() {
             if (!state.timetableData) return;
@@ -914,10 +921,15 @@
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');
-            classFilter.innerHTML = '<option value="">Select Class</option>';
+            const selectedClasses = getMultiSelectValues('classFilter');
+            classFilter.innerHTML = '';
             classes.forEach(className => {
-                classFilter.innerHTML += `<option value="${className}">${className}</option>`;
+                const isSelected = selectedClasses.includes(className) ? ' selected' : '';
+                classFilter.innerHTML += `<option value="${className}"${isSelected}>${className}</option>`;
             });
+            if (selectedClasses.length === 0) {
+                classFilter.selectedIndex = -1;
+            }
             
             // Update class filter in Modify Timetable
             const modifyClassFilter = document.getElementById('modifyClassFilter');
@@ -940,10 +952,15 @@
                 .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             
             const teacherFilter = document.getElementById('teacherFilter');
-            teacherFilter.innerHTML = '<option value="">Select Teacher</option>';
+            const selectedTeachers = getMultiSelectValues('teacherFilter');
+            teacherFilter.innerHTML = '';
             sortedTeachers.forEach(teacher => {
-                teacherFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
+                const isSelected = selectedTeachers.includes(teacher) ? ' selected' : '';
+                teacherFilter.innerHTML += `<option value="${teacher}"${isSelected}>${teacher}</option>`;
             });
+            if (selectedTeachers.length === 0) {
+                teacherFilter.selectedIndex = -1;
+            }
             
             const teacherScheduleFilter = document.getElementById('teacherScheduleFilter');
             teacherScheduleFilter.innerHTML = '<option value="">Select Teacher</option>';
@@ -952,18 +969,18 @@
             });
             
             const subjectFilter = document.getElementById('subjectFilter');
-            const selectedSubject = subjectFilter.value;
-            subjectFilter.innerHTML = '<option value="">Select Subject</option>';
+            const selectedSubjects = getMultiSelectValues('subjectFilter');
+            subjectFilter.innerHTML = '';
             
             const uniqueSubjects = Array.from(getUniqueSubjectMap().entries())
                 .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
             
             uniqueSubjects.forEach(([subjectKey, subjectLabel]) => {
-                subjectFilter.innerHTML += `<option value="${subjectKey}">${subjectLabel}</option>`;
+                const isSelected = selectedSubjects.includes(subjectKey) ? ' selected' : '';
+                subjectFilter.innerHTML += `<option value="${subjectKey}"${isSelected}>${subjectLabel}</option>`;
             });
-            
-            if (selectedSubject && uniqueSubjects.some(([key]) => key === selectedSubject)) {
-                subjectFilter.value = selectedSubject;
+            if (selectedSubjects.length === 0) {
+                subjectFilter.selectedIndex = -1;
             }
         }
         
@@ -989,15 +1006,15 @@
             }
             
             // Get filter values
-            const classFilter = document.getElementById('classFilter').value;
-            const teacherFilter = document.getElementById('teacherFilter').value;
-            const subjectFilter = document.getElementById('subjectFilter').value;
+            const classFilters = getMultiSelectValues('classFilter');
+            const teacherFilters = getMultiSelectValues('teacherFilter');
+            const subjectFilters = getMultiSelectValues('subjectFilter');
             
             let html = '';
             
             if (state.currentView === 'class') {
                 // Show class-wise timetable
-                const classesToShow = classFilter ? [classFilter] : Object.keys(state.timetableData);
+                const classesToShow = classFilters.length > 0 ? classFilters : Object.keys(state.timetableData);
                 
                 classesToShow.forEach(className => {
                     const classData = state.timetableData[className];
@@ -1007,10 +1024,10 @@
                 });
             } else if (state.currentView === 'teacher') {
                 // Show teacher-wise timetable
-                html = generateTeacherTimetableHTML(teacherFilter);
+                html = generateTeacherTimetableHTML(teacherFilters);
             } else if (state.currentView === 'subject') {
                 // Show subject-wise timetable
-                html = generateSubjectTimetableHTML(subjectFilter);
+                html = generateSubjectTimetableHTML(subjectFilters);
             }
             
             timetableDisplay.innerHTML = html;
@@ -1104,150 +1121,160 @@
         }
         
         // Generate teacher timetable HTML
-        function generateTeacherTimetableHTML(teacherFilter) {
-            if (!teacherFilter) {
-                return '<div class="empty-state"><p>Please select a teacher to view their schedule.</p></div>';
+        function generateTeacherTimetableHTML(teacherFilters) {
+            if (!teacherFilters || teacherFilters.length === 0) {
+                return '<div class="empty-state"><p>Please select one or more teachers to view their schedules.</p></div>';
             }
             
             if (!state.timetableData) return '<p>No timetable data.</p>';
             
-            // Find all classes where this teacher teaches
-            const teacherClasses = {};
-            const classNames = Object.keys(state.timetableData);
-            
-            classNames.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.teacherName === teacherFilter && period.subject) {
-                            if (!teacherClasses[className]) teacherClasses[className] = {};
-                            if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
-                            teacherClasses[className][day.dayName].push(period);
-                        }
+            let html = '';
+            teacherFilters.forEach(teacherFilter => {
+                // Find all classes where this teacher teaches
+                const teacherClasses = {};
+                const classNames = Object.keys(state.timetableData);
+                
+                classNames.forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (period.teacherName === teacherFilter && period.subject) {
+                                if (!teacherClasses[className]) teacherClasses[className] = {};
+                                if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
+                                teacherClasses[className][day.dayName].push(period);
+                            }
+                        });
                     });
                 });
-            });
-            
-            if (Object.keys(teacherClasses).length === 0) {
-                return `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
-            }
-            
-            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
-            html += '<table class="timetable">';
-            html += '<thead><tr><th>Day/Period</th>';
-            
-            // Get all classes this teacher teaches in
-            const classes = Object.keys(teacherClasses);
-            
-            classes.forEach(className => {
-                html += `<th>${className}</th>`;
-            });
-            
-            html += '</tr></thead><tbody>';
-            
-            // Data rows
-            const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            
-            dayOrder.forEach(dayName => {
-                html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                
+                if (Object.keys(teacherClasses).length === 0) {
+                    html += `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
+                    return;
+                }
+                
+                html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
+                html += '<table class="timetable">';
+                html += '<thead><tr><th>Day/Period</th>';
+                
+                // Get all classes this teacher teaches in
+                const classes = Object.keys(teacherClasses);
                 
                 classes.forEach(className => {
-                    const dayPeriods = teacherClasses[className][dayName] || [];
-                    let periodInfo = '';
-                    
-                    if (dayPeriods.length > 0) {
-                        // Show all periods for this teacher in this class on this day
-                        const periodText = dayPeriods.map(p => 
-                            `P${p.period}: ${p.subject}`
-                        ).join('<br>');
-                        
-                        periodInfo = `
-                            <div class="period-subject">${periodText}</div>
-                        `;
-                    }
-                    
-                    html += `<td class="period-cell">${periodInfo}</td>`;
+                    html += `<th>${className}</th>`;
                 });
                 
-                html += '</tr>';
+                html += '</tr></thead><tbody>';
+                
+                // Data rows
+                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                
+                dayOrder.forEach(dayName => {
+                    html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                    
+                    classes.forEach(className => {
+                        const dayPeriods = teacherClasses[className][dayName] || [];
+                        let periodInfo = '';
+                        
+                        if (dayPeriods.length > 0) {
+                            // Show all periods for this teacher in this class on this day
+                            const periodText = dayPeriods.map(p => 
+                                `P${p.period}: ${p.subject}`
+                            ).join('<br>');
+                            
+                            periodInfo = `
+                                <div class="period-subject">${periodText}</div>
+                            `;
+                        }
+                        
+                        html += `<td class="period-cell">${periodInfo}</td>`;
+                    });
+                    
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
             });
             
-            html += '</tbody></table>';
             return html;
         }
         
         // Generate subject timetable HTML
-        function generateSubjectTimetableHTML(subjectFilterKey) {
-            if (!subjectFilterKey) {
-                return '<div class="empty-state"><p>Please select a subject to view its schedule.</p></div>';
+        function generateSubjectTimetableHTML(subjectFilterKeys) {
+            if (!subjectFilterKeys || subjectFilterKeys.length === 0) {
+                return '<div class="empty-state"><p>Please select one or more subjects to view schedules.</p></div>';
             }
             
             if (!state.timetableData) return '<p>No timetable data.</p>';
             
-            const subjectLabel = getUniqueSubjectMap().get(subjectFilterKey) || subjectFilterKey;
-            
-            // Find all classes where this subject is taught
-            const subjectClasses = {};
-            const classNames = Object.keys(state.timetableData);
-            
-            classNames.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (normalizeSubjectName(period.subject) === subjectFilterKey) {
-                            if (!subjectClasses[className]) subjectClasses[className] = {};
-                            if (!subjectClasses[className][day.dayName]) subjectClasses[className][day.dayName] = [];
-                            subjectClasses[className][day.dayName].push(period);
-                        }
+            let html = '';
+            subjectFilterKeys.forEach(subjectFilterKey => {
+                const subjectLabel = getUniqueSubjectMap().get(subjectFilterKey) || subjectFilterKey;
+                
+                // Find all classes where this subject is taught
+                const subjectClasses = {};
+                const classNames = Object.keys(state.timetableData);
+                
+                classNames.forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (normalizeSubjectName(period.subject) === subjectFilterKey) {
+                                if (!subjectClasses[className]) subjectClasses[className] = {};
+                                if (!subjectClasses[className][day.dayName]) subjectClasses[className][day.dayName] = [];
+                                subjectClasses[className][day.dayName].push(period);
+                            }
+                        });
                     });
                 });
-            });
-            
-            if (Object.keys(subjectClasses).length === 0) {
-                return `<div class="empty-state"><p>No schedule found for subject: ${subjectLabel}</p></div>`;
-            }
-            
-            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectLabel}</h3>`;
-            html += '<table class="timetable">';
-            html += '<thead><tr><th>Day/Period</th>';
-            
-            // Get all classes where this subject is taught
-            const classes = Object.keys(subjectClasses);
-            
-            classes.forEach(className => {
-                html += `<th>${className}</th>`;
-            });
-            
-            html += '</tr></thead><tbody>';
-            
-            // Data rows
-            const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            
-            dayOrder.forEach(dayName => {
-                html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                
+                if (Object.keys(subjectClasses).length === 0) {
+                    html += `<div class="empty-state"><p>No schedule found for subject: ${subjectLabel}</p></div>`;
+                    return;
+                }
+                
+                html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectLabel}</h3>`;
+                html += '<table class="timetable">';
+                html += '<thead><tr><th>Day/Period</th>';
+                
+                // Get all classes where this subject is taught
+                const classes = Object.keys(subjectClasses);
                 
                 classes.forEach(className => {
-                    const dayPeriods = subjectClasses[className][dayName] || [];
-                    let periodInfo = '';
-                    
-                    if (dayPeriods.length > 0) {
-                        // Show all periods for this subject in this class on this day
-                        const periodText = dayPeriods.map(p => 
-                            `P${p.period}: ${p.teacherName}`
-                        ).join('<br>');
-                        
-                        periodInfo = `
-                            <div class="period-subject">${periodText}</div>
-                        `;
-                    }
-                    
-                    html += `<td class="period-cell">${periodInfo}</td>`;
+                    html += `<th>${className}</th>`;
                 });
                 
-                html += '</tr>';
+                html += '</tr></thead><tbody>';
+                
+                // Data rows
+                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                
+                dayOrder.forEach(dayName => {
+                    html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                    
+                    classes.forEach(className => {
+                        const dayPeriods = subjectClasses[className][dayName] || [];
+                        let periodInfo = '';
+                        
+                        if (dayPeriods.length > 0) {
+                            // Show all periods for this subject in this class on this day
+                            const periodText = dayPeriods.map(p => 
+                                `P${p.period}: ${p.teacherName}`
+                            ).join('<br>');
+                            
+                            periodInfo = `
+                                <div class="period-subject">${periodText}</div>
+                            `;
+                        }
+                        
+                        html += `<td class="period-cell">${periodInfo}</td>`;
+                    });
+                    
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
             });
             
-            html += '</tbody></table>';
             return html;
         }
         
@@ -1805,7 +1832,7 @@
             }
             
             const teacherScheduleDisplay = document.getElementById('teacherScheduleDisplay');
-            teacherScheduleDisplay.innerHTML = generateTeacherTimetableHTML(teacherFilter);
+            teacherScheduleDisplay.innerHTML = generateTeacherTimetableHTML([teacherFilter]);
         }
         
         // Export teacher schedule

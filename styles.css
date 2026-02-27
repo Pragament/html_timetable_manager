@@ -519,6 +519,10 @@
     min-width: 200px;
 }
 
+/*.filter-controls select[multiple] {
+    min-height: 150px;
+}*/
+
 .overlap-progress {
     margin-bottom: 16px;
     background-color: #f8fbff;
