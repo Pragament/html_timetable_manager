@@ -417,6 +417,13 @@
 .timetable th.break-header {
     background-color: #5c6bc0;
 }
+
+.period-header-time {
+    font-size: 0.72rem;
+    font-weight: 500;
+    opacity: 0.9;
+    margin-top: 4px;
+}
         
         .timetable td {
             padding: 12px;

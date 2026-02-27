@@ -1034,7 +1034,9 @@
             // Header row
             html += '<thead><tr><th>Day/Period</th>';
             for (let i = 1; i <= numPeriods; i++) {
-                html += `<th>P${i}</th>`;
+                const periodTime = (headerDay.periods[i - 1]?.time || '').trim();
+                const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
+                html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
                 if (showBreakAfterPeriod[i]) {
                     html += `<th class="break-header">Break</th>`;
                 }
@@ -1054,8 +1056,10 @@
                 dayData.periods.forEach(period => {
                     // Check if this is a holiday
                     const isHoliday = isDateHoliday(dayName);
+                    const hasSubject = !!(period.subject && period.subject.trim() !== '');
+                    const hasTeacher = !!(period.teacherName && period.teacherName.trim() !== '');
                     
-                    if (!period.subject || period.subject === '') {
+                    if (!hasSubject && !hasTeacher) {
                         html += `<td class="break-cell">BREAK</td>`;
                     } else if (isHoliday) {
                         html += `<td class="holiday-cell">HOLIDAY</td>`;
@@ -1065,17 +1069,17 @@
                         const overlapWarningHtml = period.overlap
                             ? `<div class="overlap-warning" title="${escapeHtmlAttribute(overlapTooltip)}" aria-label="${escapeHtmlAttribute(overlapTooltip)}"><i class="fas fa-exclamation-triangle"></i></div>`
                             : '';
-                        const breakAfter = Number(period.breakAfter || 0);
-                        const breakInfoHtml = breakAfter > 0
-                            ? `<div class="period-break-info">Break after: ${breakAfter} min</div>`
-                            : '';
+                        const subjectHtml = hasSubject
+                            ? `<div class="period-subject">${period.subject}</div>`
+                            : '<div class="period-subject">No Subject</div>';
+                        const teacherHtml = hasTeacher
+                            ? `<div class="period-teacher">${period.teacherName}</div>`
+                            : '<div class="period-teacher">No Teacher</div>';
                         html += `
                             <td class="period-cell ${overlapClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
                                 ${overlapWarningHtml}
-                                <div class="period-subject">${period.subject}</div>
-                                <div class="period-teacher">${period.teacherName}</div>
-                                ${breakInfoHtml}
-                                <div class="period-time">${period.time}</div>
+                                ${subjectHtml}
+                                ${teacherHtml}
                             </td>
                         `;
                     }
