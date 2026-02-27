@@ -108,21 +108,18 @@
             </div>
             
             <div class="filter-controls">
-                <select id="classFilter" class="form-control">
-                    <option value="">Select Class</option>
+                <select id="classFilter" class="form-control" multiple size="3" title="Select one or more classes">
                     <option value="Grade-I-A">Grade I-A</option>
                     <option value="Grade-I-B">Grade I-B</option>
                     <option value="Grade-II-A">Grade II-A</option>
                     <option value="Grade-II-B">Grade II-B</option>
                 </select>
-                <select id="teacherFilter" class="form-control" style="display: none;">
-                    <option value="">Select Teacher</option>
+                <select id="teacherFilter" class="form-control" style="display: none;" multiple size="3" title="Select one or more teachers">
                     <option value="Indira">Indira</option>
                     <option value="Sai Priya">Sai Priya</option>
                     <option value="Uma Rani">Uma Rani</option>
                 </select>
-                <select id="subjectFilter" class="form-control" style="display: none;">
-                    <option value="">Select Subject</option>
+                <select id="subjectFilter" class="form-control" style="display: none;" multiple size="3" title="Select one or more subjects">
                     <option value="MATHS">Mathematics</option>
                     <option value="ENGLISH">English</option>
                     <option value="EVS">EVS</option>
@@ -131,6 +128,18 @@
                 <button class="btn btn-primary" id="applyFilterBtn">
                     <i class="fas fa-filter"></i> Apply Filter
                 </button>
+                <button class="btn btn-secondary" id="checkOverlapsBtn">
+                    <i class="fas fa-search"></i> Check Overlaps
+                </button>
+                <button class="btn btn-danger" id="exportOverlapsBtn">
+                    <i class="fas fa-file-csv"></i> Export Overlaps CSV
+                </button>
+            </div>
+            <div class="overlap-progress" id="overlapProgress" style="display: none;">
+                <div class="overlap-progress-label" id="overlapProgressLabel">Checking overlaps...</div>
+                <div class="overlap-progress-track">
+                    <div class="overlap-progress-bar" id="overlapProgressBar"></div>
+                </div>
             </div>
             
             <div class="timetable-container">
@@ -179,7 +188,9 @@
             <div class="upload-area" id="csvUploadArea" style="display: none;">
                 <i class="fas fa-file-csv"></i>
                 <h3>Upload CSV Timetable File</h3>
-                <p>Upload a CSV file with format: Class-Section,Day,P1,P2,... where each period has format: TeacherID:TeacherName:Subject</p>
+                <p>Required columns: <code>Class-Section,Day,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10</code></p>
+                <p>Each period cell must be: <code>TeacherID:TeacherName:Subject</code></p>
+                <p>Rules: use <code>-</code> in Class-Section (example <code>Grade-I-A</code>), and <code>:</code> between TeacherID, TeacherName, and Subject.</p>
                 <input type="file" id="csvFileInput" accept=".csv, .txt">
                 <label for="csvFileInput">Choose CSV File</label>
                 <p id="selectedCSVFileName" style="margin-top: 15px; font-style: italic;"></p>
@@ -347,7 +358,7 @@
                 <button class="close-modal" id="closeTimeModal">&times;</button>
             </div>
             <div class="modal-body">
-                <p>Set P1 start time, choose regular/special periods, and define durations. Empty timetable cells will still be shown as breaks.</p>
+                <p>Set P1 start time, choose regular/special periods, define durations, and optional break after each period. Empty timetable cells will still be shown as breaks.</p>
                 <div id="timeInputContainer"></div>
             </div>
             <div class="modal-footer">

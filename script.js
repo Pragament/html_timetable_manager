@@ -7,7 +7,8 @@
             rescheduleMode: false,
             currentYear: '2026',
             periodTimes: {},
-            fileType: 'excel'
+            fileType: 'excel',
+            overlapCheckInProgress: false
         };
         
         // Sample data for demonstration
@@ -150,6 +151,8 @@
             });
             
             document.getElementById('applyFilterBtn').addEventListener('click', renderTimetable);
+            document.getElementById('checkOverlapsBtn').addEventListener('click', runOverlapCheckWithProgress);
+            document.getElementById('exportOverlapsBtn').addEventListener('click', exportOverlapsCSV);
             document.getElementById('exportTimetableBtn').addEventListener('click', exportTimetable);
             document.getElementById('goToUploadBtn').addEventListener('click', function() {
                 document.querySelector('.tab[data-target="upload-timetable-section"]').click();
@@ -594,6 +597,10 @@
                             <label for="specialDuration-P${i}">Special Duration (minutes)</label>
                             <input type="number" id="specialDuration-P${i}" min="1" value="45">
                         </div>
+                        <div class="time-period-fields">
+                            <label for="breakAfter-P${i}">Break After P${i} (minutes)</label>
+                            <input type="number" id="breakAfter-P${i}" min="0" value="0">
+                        </div>
                         <div class="time-period-preview" id="timePreview-P${i}">--:--</div>
                     </div>
                 `;
@@ -615,6 +622,7 @@
             for (let i = 1; i <= numPeriods; i++) {
                 const typeSelect = document.getElementById(`periodType-P${i}`);
                 const specialDurationInput = document.getElementById(`specialDuration-P${i}`);
+                const breakAfterInput = document.getElementById(`breakAfter-P${i}`);
                 const specialWrap = document.getElementById(`specialDurationWrap-P${i}`);
                 
                 typeSelect.addEventListener('change', function() {
@@ -623,6 +631,10 @@
                 });
                 
                 specialDurationInput.addEventListener('input', function() {
+                    refreshGeneratedPeriodTimes(numPeriods);
+                });
+                
+                breakAfterInput.addEventListener('input', function() {
                     refreshGeneratedPeriodTimes(numPeriods);
                 });
             }
@@ -674,6 +686,7 @@
             
             const periodTimes = {};
             const periodTypes = {};
+            const periodBreaks = {};
             let cursor = startMinutes;
             
             for (let i = 1; i <= numPeriods; i++) {
@@ -690,15 +703,21 @@
                     duration = specialDuration;
                 }
                 
+                const breakAfter = Number(document.getElementById(`breakAfter-${periodKey}`).value);
+                if (!Number.isFinite(breakAfter) || breakAfter < 0) {
+                    return { error: `Break after ${periodKey} must be 0 or greater.` };
+                }
+                
                 const periodStart = cursor;
                 const periodEnd = cursor + duration;
                 
                 periodTimes[periodKey] = `${formatMinutesToTime(periodStart)}-${formatMinutesToTime(periodEnd)}`;
                 periodTypes[periodKey] = isSpecial ? 'Special' : 'Regular';
-                cursor = periodEnd;
+                periodBreaks[periodKey] = breakAfter;
+                cursor = periodEnd + breakAfter;
             }
             
-            return { periodTimes, periodTypes };
+            return { periodTimes, periodTypes, periodBreaks };
         }
         
         function refreshGeneratedPeriodTimes(numPeriods) {
@@ -751,6 +770,7 @@
                             const periodKey = `P${period.period}`;
                             const periodTime = state.periodTimes[periodKey] || getDefaultPeriodTime(period.period);
                             const periodType = plan.periodTypes[periodKey] || 'Regular';
+                            const breakAfter = plan.periodBreaks[periodKey] || 0;
                             
                             dayEntry.periods.push({
                                 period: period.period,
@@ -758,7 +778,8 @@
                                 teacherName: period.teacherName,
                                 teacherId: period.teacherId,
                                 time: periodTime,
-                                type: periodType
+                                type: periodType,
+                                breakAfter: breakAfter
                             });
                         });
                         
@@ -821,6 +842,45 @@
             return getDefaultPeriodTime(periodNumber);
         }
         
+        function normalizeSubjectName(subject) {
+            return (subject || '').trim().toLowerCase();
+        }
+        
+        function escapeHtmlAttribute(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+        
+        function getUniqueSubjectMap() {
+            const subjectMap = new Map();
+            if (!state.timetableData) return subjectMap;
+            
+            Object.keys(state.timetableData).forEach(className => {
+                const classData = state.timetableData[className];
+                classData.days.forEach(day => {
+                    day.periods.forEach(period => {
+                        const label = (period.subject || '').trim();
+                        const key = normalizeSubjectName(label);
+                        if (key && !subjectMap.has(key)) {
+                            subjectMap.set(key, label);
+                        }
+                    });
+                });
+            });
+            
+            return subjectMap;
+        }
+        
+        function getMultiSelectValues(selectId) {
+            const select = document.getElementById(selectId);
+            return Array.from(select.selectedOptions)
+                .map(option => option.value)
+                .filter(value => value && value.trim() !== '');
+        }
+        
         // Update timetable summary
         function updateTimetableSummary() {
             if (!state.timetableData) return;
@@ -856,14 +916,20 @@
         function updateClassFilters() {
             if (!state.timetableData) return;
             
-            const classes = Object.keys(state.timetableData);
+            const classes = Object.keys(state.timetableData)
+                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');
-            classFilter.innerHTML = '<option value="">Select Class</option>';
+            const selectedClasses = getMultiSelectValues('classFilter');
+            classFilter.innerHTML = '';
             classes.forEach(className => {
-                classFilter.innerHTML += `<option value="${className}">${className}</option>`;
+                const isSelected = selectedClasses.includes(className) ? ' selected' : '';
+                classFilter.innerHTML += `<option value="${className}"${isSelected}>${className}</option>`;
             });
+            if (selectedClasses.length === 0) {
+                classFilter.selectedIndex = -1;
+            }
             
             // Update class filter in Modify Timetable
             const modifyClassFilter = document.getElementById('modifyClassFilter');
@@ -882,35 +948,40 @@
                     });
                 });
             });
+            const sortedTeachers = Array.from(teachers)
+                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             
             const teacherFilter = document.getElementById('teacherFilter');
-            teacherFilter.innerHTML = '<option value="">Select Teacher</option>';
-            teachers.forEach(teacher => {
-                teacherFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
+            const selectedTeachers = getMultiSelectValues('teacherFilter');
+            teacherFilter.innerHTML = '';
+            sortedTeachers.forEach(teacher => {
+                const isSelected = selectedTeachers.includes(teacher) ? ' selected' : '';
+                teacherFilter.innerHTML += `<option value="${teacher}"${isSelected}>${teacher}</option>`;
             });
+            if (selectedTeachers.length === 0) {
+                teacherFilter.selectedIndex = -1;
+            }
             
             const teacherScheduleFilter = document.getElementById('teacherScheduleFilter');
             teacherScheduleFilter.innerHTML = '<option value="">Select Teacher</option>';
-            teachers.forEach(teacher => {
+            sortedTeachers.forEach(teacher => {
                 teacherScheduleFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
             });
             
-            // Update subject filter
-            const subjects = new Set();
-            classes.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.subject) subjects.add(period.subject);
-                    });
-                });
-            });
-            
             const subjectFilter = document.getElementById('subjectFilter');
-            subjectFilter.innerHTML = '<option value="">Select Subject</option>';
-            subjects.forEach(subject => {
-                subjectFilter.innerHTML += `<option value="${subject}">${subject}</option>`;
+            const selectedSubjects = getMultiSelectValues('subjectFilter');
+            subjectFilter.innerHTML = '';
+            
+            const uniqueSubjects = Array.from(getUniqueSubjectMap().entries())
+                .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
+            
+            uniqueSubjects.forEach(([subjectKey, subjectLabel]) => {
+                const isSelected = selectedSubjects.includes(subjectKey) ? ' selected' : '';
+                subjectFilter.innerHTML += `<option value="${subjectKey}"${isSelected}>${subjectLabel}</option>`;
             });
+            if (selectedSubjects.length === 0) {
+                subjectFilter.selectedIndex = -1;
+            }
         }
         
         // Render timetable
@@ -935,15 +1006,15 @@
             }
             
             // Get filter values
-            const classFilter = document.getElementById('classFilter').value;
-            const teacherFilter = document.getElementById('teacherFilter').value;
-            const subjectFilter = document.getElementById('subjectFilter').value;
+            const classFilters = getMultiSelectValues('classFilter');
+            const teacherFilters = getMultiSelectValues('teacherFilter');
+            const subjectFilters = getMultiSelectValues('subjectFilter');
             
             let html = '';
             
             if (state.currentView === 'class') {
                 // Show class-wise timetable
-                const classesToShow = classFilter ? [classFilter] : Object.keys(state.timetableData);
+                const classesToShow = classFilters.length > 0 ? classFilters : Object.keys(state.timetableData);
                 
                 classesToShow.forEach(className => {
                     const classData = state.timetableData[className];
@@ -953,16 +1024,13 @@
                 });
             } else if (state.currentView === 'teacher') {
                 // Show teacher-wise timetable
-                html = generateTeacherTimetableHTML(teacherFilter);
+                html = generateTeacherTimetableHTML(teacherFilters);
             } else if (state.currentView === 'subject') {
                 // Show subject-wise timetable
-                html = generateSubjectTimetableHTML(subjectFilter);
+                html = generateSubjectTimetableHTML(subjectFilters);
             }
             
             timetableDisplay.innerHTML = html;
-            
-            // Check for overlaps if timetable is shown
-            checkForOverlaps();
         }
         
         // Generate timetable HTML
@@ -973,13 +1041,25 @@
             
             // Determine number of periods from the first day
             const numPeriods = classData.days[0].periods.length;
+            const headerDay = classData.days[0];
+            const showBreakAfterPeriod = {};
+            
+            for (let i = 0; i < numPeriods; i++) {
+                const period = headerDay.periods[i];
+                showBreakAfterPeriod[i + 1] = i < numPeriods - 1 && Number(period?.breakAfter || 0) > 0;
+            }
             
             let html = '<table class="timetable">';
             
             // Header row
             html += '<thead><tr><th>Day/Period</th>';
             for (let i = 1; i <= numPeriods; i++) {
-                html += `<th>P${i}</th>`;
+                const periodTime = (headerDay.periods[i - 1]?.time || '').trim();
+                const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
+                html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
+                if (showBreakAfterPeriod[i]) {
+                    html += `<th class="break-header">Break</th>`;
+                }
             }
             html += '</tr></thead><tbody>';
             
@@ -996,21 +1076,40 @@
                 dayData.periods.forEach(period => {
                     // Check if this is a holiday
                     const isHoliday = isDateHoliday(dayName);
+                    const hasSubject = !!(period.subject && period.subject.trim() !== '');
+                    const hasTeacher = !!(period.teacherName && period.teacherName.trim() !== '');
                     
-                    if (!period.subject || period.subject === '') {
+                    if (!hasSubject && !hasTeacher) {
                         html += `<td class="break-cell">BREAK</td>`;
                     } else if (isHoliday) {
                         html += `<td class="holiday-cell">HOLIDAY</td>`;
                     } else {
                         const overlapClass = period.overlap ? 'overlap' : '';
+                        const overlapTooltip = period.overlapInfo || 'Teacher overlap detected.';
+                        const overlapWarningHtml = period.overlap
+                            ? `<div class="overlap-warning" title="${escapeHtmlAttribute(overlapTooltip)}" aria-label="${escapeHtmlAttribute(overlapTooltip)}"><i class="fas fa-exclamation-triangle"></i></div>`
+                            : '';
+                        const subjectHtml = hasSubject
+                            ? `<div class="period-subject">${period.subject}</div>`
+                            : '<div class="period-subject">No Subject</div>';
+                        const teacherHtml = hasTeacher
+                            ? `<div class="period-teacher">${period.teacherName}</div>`
+                            : '<div class="period-teacher">No Teacher</div>';
                         html += `
                             <td class="period-cell ${overlapClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
-                                ${period.overlap ? '<div class="overlap-warning"><i class="fas fa-exclamation-triangle"></i></div>' : ''}
-                                <div class="period-subject">${period.subject}</div>
-                                <div class="period-teacher">${period.teacherName}</div>
-                                <div class="period-time">${period.time}</div>
+                                ${overlapWarningHtml}
+                                ${subjectHtml}
+                                ${teacherHtml}
                             </td>
                         `;
+                    }
+                    
+                    if (showBreakAfterPeriod[period.period]) {
+                        const breakAfter = Number(period.breakAfter || 0);
+                        const breakCellHtml = breakAfter > 0
+                            ? `<div class="break-cell-title">BREAK</div><div class="break-cell-time">${breakAfter} min</div>`
+                            : `<div class="break-cell-title">-</div>`;
+                        html += `<td class="inter-period-break-cell">${breakCellHtml}</td>`;
                     }
                 });
                 
@@ -1022,148 +1121,160 @@
         }
         
         // Generate teacher timetable HTML
-        function generateTeacherTimetableHTML(teacherFilter) {
-            if (!teacherFilter) {
-                return '<div class="empty-state"><p>Please select a teacher to view their schedule.</p></div>';
+        function generateTeacherTimetableHTML(teacherFilters) {
+            if (!teacherFilters || teacherFilters.length === 0) {
+                return '<div class="empty-state"><p>Please select one or more teachers to view their schedules.</p></div>';
             }
             
             if (!state.timetableData) return '<p>No timetable data.</p>';
             
-            // Find all classes where this teacher teaches
-            const teacherClasses = {};
-            const classNames = Object.keys(state.timetableData);
-            
-            classNames.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.teacherName === teacherFilter && period.subject) {
-                            if (!teacherClasses[className]) teacherClasses[className] = {};
-                            if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
-                            teacherClasses[className][day.dayName].push(period);
-                        }
+            let html = '';
+            teacherFilters.forEach(teacherFilter => {
+                // Find all classes where this teacher teaches
+                const teacherClasses = {};
+                const classNames = Object.keys(state.timetableData);
+                
+                classNames.forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (period.teacherName === teacherFilter && period.subject) {
+                                if (!teacherClasses[className]) teacherClasses[className] = {};
+                                if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
+                                teacherClasses[className][day.dayName].push(period);
+                            }
+                        });
                     });
                 });
-            });
-            
-            if (Object.keys(teacherClasses).length === 0) {
-                return `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
-            }
-            
-            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
-            html += '<table class="timetable">';
-            html += '<thead><tr><th>Day/Period</th>';
-            
-            // Get all classes this teacher teaches in
-            const classes = Object.keys(teacherClasses);
-            
-            classes.forEach(className => {
-                html += `<th>${className}</th>`;
-            });
-            
-            html += '</tr></thead><tbody>';
-            
-            // Data rows
-            const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            
-            dayOrder.forEach(dayName => {
-                html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                
+                if (Object.keys(teacherClasses).length === 0) {
+                    html += `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
+                    return;
+                }
+                
+                html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
+                html += '<table class="timetable">';
+                html += '<thead><tr><th>Day/Period</th>';
+                
+                // Get all classes this teacher teaches in
+                const classes = Object.keys(teacherClasses);
                 
                 classes.forEach(className => {
-                    const dayPeriods = teacherClasses[className][dayName] || [];
-                    let periodInfo = '';
-                    
-                    if (dayPeriods.length > 0) {
-                        // Show all periods for this teacher in this class on this day
-                        const periodText = dayPeriods.map(p => 
-                            `P${p.period}: ${p.subject}`
-                        ).join('<br>');
-                        
-                        periodInfo = `
-                            <div class="period-subject">${periodText}</div>
-                        `;
-                    }
-                    
-                    html += `<td class="period-cell">${periodInfo}</td>`;
+                    html += `<th>${className}</th>`;
                 });
                 
-                html += '</tr>';
+                html += '</tr></thead><tbody>';
+                
+                // Data rows
+                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                
+                dayOrder.forEach(dayName => {
+                    html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                    
+                    classes.forEach(className => {
+                        const dayPeriods = teacherClasses[className][dayName] || [];
+                        let periodInfo = '';
+                        
+                        if (dayPeriods.length > 0) {
+                            // Show all periods for this teacher in this class on this day
+                            const periodText = dayPeriods.map(p => 
+                                `P${p.period}: ${p.subject}`
+                            ).join('<br>');
+                            
+                            periodInfo = `
+                                <div class="period-subject">${periodText}</div>
+                            `;
+                        }
+                        
+                        html += `<td class="period-cell">${periodInfo}</td>`;
+                    });
+                    
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
             });
             
-            html += '</tbody></table>';
             return html;
         }
         
         // Generate subject timetable HTML
-        function generateSubjectTimetableHTML(subjectFilter) {
-            if (!subjectFilter) {
-                return '<div class="empty-state"><p>Please select a subject to view its schedule.</p></div>';
+        function generateSubjectTimetableHTML(subjectFilterKeys) {
+            if (!subjectFilterKeys || subjectFilterKeys.length === 0) {
+                return '<div class="empty-state"><p>Please select one or more subjects to view schedules.</p></div>';
             }
             
             if (!state.timetableData) return '<p>No timetable data.</p>';
             
-            // Find all classes where this subject is taught
-            const subjectClasses = {};
-            const classNames = Object.keys(state.timetableData);
-            
-            classNames.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.subject === subjectFilter) {
-                            if (!subjectClasses[className]) subjectClasses[className] = {};
-                            if (!subjectClasses[className][day.dayName]) subjectClasses[className][day.dayName] = [];
-                            subjectClasses[className][day.dayName].push(period);
-                        }
+            let html = '';
+            subjectFilterKeys.forEach(subjectFilterKey => {
+                const subjectLabel = getUniqueSubjectMap().get(subjectFilterKey) || subjectFilterKey;
+                
+                // Find all classes where this subject is taught
+                const subjectClasses = {};
+                const classNames = Object.keys(state.timetableData);
+                
+                classNames.forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (normalizeSubjectName(period.subject) === subjectFilterKey) {
+                                if (!subjectClasses[className]) subjectClasses[className] = {};
+                                if (!subjectClasses[className][day.dayName]) subjectClasses[className][day.dayName] = [];
+                                subjectClasses[className][day.dayName].push(period);
+                            }
+                        });
                     });
                 });
-            });
-            
-            if (Object.keys(subjectClasses).length === 0) {
-                return `<div class="empty-state"><p>No schedule found for subject: ${subjectFilter}</p></div>`;
-            }
-            
-            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectFilter}</h3>`;
-            html += '<table class="timetable">';
-            html += '<thead><tr><th>Day/Period</th>';
-            
-            // Get all classes where this subject is taught
-            const classes = Object.keys(subjectClasses);
-            
-            classes.forEach(className => {
-                html += `<th>${className}</th>`;
-            });
-            
-            html += '</tr></thead><tbody>';
-            
-            // Data rows
-            const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            
-            dayOrder.forEach(dayName => {
-                html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                
+                if (Object.keys(subjectClasses).length === 0) {
+                    html += `<div class="empty-state"><p>No schedule found for subject: ${subjectLabel}</p></div>`;
+                    return;
+                }
+                
+                html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectLabel}</h3>`;
+                html += '<table class="timetable">';
+                html += '<thead><tr><th>Day/Period</th>';
+                
+                // Get all classes where this subject is taught
+                const classes = Object.keys(subjectClasses);
                 
                 classes.forEach(className => {
-                    const dayPeriods = subjectClasses[className][dayName] || [];
-                    let periodInfo = '';
-                    
-                    if (dayPeriods.length > 0) {
-                        // Show all periods for this subject in this class on this day
-                        const periodText = dayPeriods.map(p => 
-                            `P${p.period}: ${p.teacherName}`
-                        ).join('<br>');
-                        
-                        periodInfo = `
-                            <div class="period-subject">${periodText}</div>
-                        `;
-                    }
-                    
-                    html += `<td class="period-cell">${periodInfo}</td>`;
+                    html += `<th>${className}</th>`;
                 });
                 
-                html += '</tr>';
+                html += '</tr></thead><tbody>';
+                
+                // Data rows
+                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                
+                dayOrder.forEach(dayName => {
+                    html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
+                    
+                    classes.forEach(className => {
+                        const dayPeriods = subjectClasses[className][dayName] || [];
+                        let periodInfo = '';
+                        
+                        if (dayPeriods.length > 0) {
+                            // Show all periods for this subject in this class on this day
+                            const periodText = dayPeriods.map(p => 
+                                `P${p.period}: ${p.teacherName}`
+                            ).join('<br>');
+                            
+                            periodInfo = `
+                                <div class="period-subject">${periodText}</div>
+                            `;
+                        }
+                        
+                        html += `<td class="period-cell">${periodInfo}</td>`;
+                    });
+                    
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
             });
             
-            html += '</tbody></table>';
             return html;
         }
         
@@ -1174,61 +1285,226 @@
             return dayName === 'Saturday' || dayName === 'Sunday';
         }
         
-        // Check for overlaps in the timetable
-        function checkForOverlaps() {
-            if (!state.timetableData) return;
+        function updateOverlapProgress(label, percent, visible) {
+            const progressWrap = document.getElementById('overlapProgress');
+            const progressLabel = document.getElementById('overlapProgressLabel');
+            const progressBar = document.getElementById('overlapProgressBar');
             
-            // Reset all overlaps
+            if (visible) {
+                progressWrap.style.display = 'block';
+                progressLabel.textContent = label;
+                progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+            } else {
+                progressWrap.style.display = 'none';
+                progressBar.style.width = '0%';
+            }
+        }
+        
+        function delayFrame() {
+            return new Promise(resolve => setTimeout(resolve, 0));
+        }
+        
+        // Check for overlaps in the timetable with visible progress
+        async function checkForOverlaps() {
+            if (!state.timetableData) return 0;
+            
+            const records = [];
             Object.keys(state.timetableData).forEach(className => {
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        period.overlap = false;
+                        records.push({
+                            className,
+                            dayName: day.dayName,
+                            periodNumber: period.period,
+                            period
+                        });
                     });
                 });
             });
             
-            // Check for teacher overlaps
-            const teacherSchedule = {};
+            const totalRecords = records.length;
+            if (totalRecords === 0) return 0;
             
-            Object.keys(state.timetableData).forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.teacherName && period.teacherName !== '' && period.subject) {
-                            const key = `${day.dayName}-${period.time}-${period.teacherName}`;
-                            
-                            if (teacherSchedule[key]) {
-                                // Found an overlap
-                                teacherSchedule[key].push({ className, day: day.dayName, period: period.period });
-                                period.overlap = true;
-                            } else {
-                                teacherSchedule[key] = [{ className, day: day.dayName, period: period.period }];
-                            }
-                        }
-                    });
-                });
-            });
+            const chunkSize = 250;
+            const teacherSchedule = new Map();
             
-            // Mark all periods in overlaps
-            Object.values(teacherSchedule).forEach(periods => {
-                if (periods.length > 1) {
-                    periods.forEach(p => {
-                        const classData = state.timetableData[p.className];
-                        const dayData = classData.days.find(d => d.dayName === p.day);
-                        if (dayData) {
-                            const periodData = dayData.periods.find(per => per.period === p.period);
-                            if (periodData) {
-                                periodData.overlap = true;
-                            }
-                        }
-                    });
+            updateOverlapProgress('Preparing overlap scan...', 0, true);
+            
+            for (let i = 0; i < totalRecords; i++) {
+                const { period } = records[i];
+                period.overlap = false;
+                period.overlapInfo = '';
+                
+                if ((i + 1) % chunkSize === 0 || i === totalRecords - 1) {
+                    const progress = ((i + 1) / totalRecords) * 35;
+                    updateOverlapProgress('Preparing overlap scan...', progress, true);
+                    await delayFrame();
                 }
-            });
+            }
             
-            // Re-render if needed
-            if (document.getElementById('view-timetable-section').classList.contains('active')) {
+            for (let i = 0; i < totalRecords; i++) {
+                const current = records[i];
+                const period = current.period;
+                
+                if (period.teacherName && period.teacherName !== '' && period.subject) {
+                    const key = `${current.dayName}-${period.time}-${period.teacherName}`;
+                    if (!teacherSchedule.has(key)) {
+                        teacherSchedule.set(key, []);
+                    }
+                    teacherSchedule.get(key).push(current);
+                }
+                
+                if ((i + 1) % chunkSize === 0 || i === totalRecords - 1) {
+                    const progress = 35 + (((i + 1) / totalRecords) * 45);
+                    updateOverlapProgress('Analyzing teacher schedules...', progress, true);
+                    await delayFrame();
+                }
+            }
+            
+            const overlapGroups = Array.from(teacherSchedule.values()).filter(group => group.length > 1);
+            const totalGroups = overlapGroups.length;
+            let overlapCount = 0;
+            
+            if (totalGroups === 0) {
+                updateOverlapProgress('No overlaps found.', 100, true);
+                await delayFrame();
+                return 0;
+            }
+            
+            for (let i = 0; i < totalGroups; i++) {
+                const group = overlapGroups[i];
+                
+                group.forEach(item => {
+                    item.period.overlap = true;
+                    overlapCount++;
+                    
+                    const otherConflicts = group
+                        .filter(other => !(other.className === item.className && other.dayName === item.dayName && other.periodNumber === item.periodNumber))
+                        .map(other => `${other.className} (${other.dayName} P${other.periodNumber})`);
+                    
+                    item.period.overlapInfo = `Teacher ${item.period.teacherName} also has ${otherConflicts.join(', ')} at ${item.period.time}.`;
+                });
+                
+                if ((i + 1) % 20 === 0 || i === totalGroups - 1) {
+                    const progress = 80 + (((i + 1) / totalGroups) * 20);
+                    updateOverlapProgress('Marking overlaps...', progress, true);
+                    await delayFrame();
+                }
+            }
+            
+            updateOverlapProgress(`Overlap scan complete. ${overlapCount} conflicting periods found.`, 100, true);
+            await delayFrame();
+            return overlapCount;
+        }
+        
+        async function runOverlapCheckWithProgress() {
+            if (!state.timetableData) {
+                alert("No timetable data loaded.");
+                return;
+            }
+            
+            if (state.overlapCheckInProgress) return;
+            state.overlapCheckInProgress = true;
+            
+            const checkBtn = document.getElementById('checkOverlapsBtn');
+            const originalLabel = checkBtn.innerHTML;
+            checkBtn.disabled = true;
+            checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            
+            try {
+                await checkForOverlaps();
                 renderTimetable();
+            } finally {
+                checkBtn.disabled = false;
+                checkBtn.innerHTML = originalLabel;
+                state.overlapCheckInProgress = false;
+                setTimeout(() => updateOverlapProgress('', 0, false), 900);
+            }
+        }
+        
+        function escapeCSVField(value) {
+            const stringValue = String(value ?? '');
+            const escapedValue = stringValue.replace(/"/g, '""');
+            return `"${escapedValue}"`;
+        }
+        
+        async function exportOverlapsCSV() {
+            if (!state.timetableData) {
+                alert("No timetable data loaded.");
+                return;
+            }
+            
+            if (state.overlapCheckInProgress) return;
+            state.overlapCheckInProgress = true;
+            
+            const exportBtn = document.getElementById('exportOverlapsBtn');
+            const originalLabel = exportBtn.innerHTML;
+            const checkBtn = document.getElementById('checkOverlapsBtn');
+            const originalCheckLabel = checkBtn.innerHTML;
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+            checkBtn.disabled = true;
+            checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            
+            try {
+                await checkForOverlaps();
+                renderTimetable();
+                
+                const overlapRows = [];
+                Object.keys(state.timetableData).forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (period.overlap) {
+                                overlapRows.push({
+                                    className,
+                                    day: day.dayName,
+                                    period: `P${period.period}`,
+                                    teacher: period.teacherName || '',
+                                    subject: period.subject || '',
+                                    time: period.time || '',
+                                    overlapInfo: period.overlapInfo || ''
+                                });
+                            }
+                        });
+                    });
+                });
+                
+                if (overlapRows.length === 0) {
+                    alert("No overlaps found to export.");
+                    return;
+                }
+                
+                let csv = 'Class,Day,Period,Teacher,Subject,Time,Conflict Details\n';
+                overlapRows.forEach(row => {
+                    csv += [
+                        escapeCSVField(row.className),
+                        escapeCSVField(row.day),
+                        escapeCSVField(row.period),
+                        escapeCSVField(row.teacher),
+                        escapeCSVField(row.subject),
+                        escapeCSVField(row.time),
+                        escapeCSVField(row.overlapInfo)
+                    ].join(',') + '\n';
+                });
+                
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'timetable_overlaps.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = originalLabel;
+                checkBtn.disabled = false;
+                checkBtn.innerHTML = originalCheckLabel;
+                state.overlapCheckInProgress = false;
+                setTimeout(() => updateOverlapProgress('', 0, false), 900);
             }
         }
         
@@ -1331,7 +1607,7 @@
                     csv += `${className},${dayName}`;
                     
                     dayData.periods.forEach(period => {
-                        if (period.subject && period.teacherName) {
+                        if (period.subject || period.teacherName || period.teacherId) {
                             csv += `,${period.teacherId || ''}:${period.teacherName}:${period.subject}`;
                         } else {
                             csv += ',';
@@ -1556,7 +1832,7 @@
             }
             
             const teacherScheduleDisplay = document.getElementById('teacherScheduleDisplay');
-            teacherScheduleDisplay.innerHTML = generateTeacherTimetableHTML(teacherFilter);
+            teacherScheduleDisplay.innerHTML = generateTeacherTimetableHTML([teacherFilter]);
         }
         
         // Export teacher schedule

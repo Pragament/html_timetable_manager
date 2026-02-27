@@ -406,13 +406,24 @@
             min-width: 1000px;
         }
         
-        .timetable th {
-            background-color: var(--primary-color);
-            color: white;
-            padding: 15px;
-            text-align: center;
-            font-weight: 600;
-        }
+.timetable th {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.timetable th.break-header {
+    background-color: #5c6bc0;
+}
+
+.period-header-time {
+    font-size: 0.72rem;
+    font-weight: 500;
+    opacity: 0.9;
+    margin-top: 4px;
+}
         
         .timetable td {
             padding: 12px;
@@ -431,10 +442,16 @@
             margin-bottom: 5px;
         }
         
-        .period-teacher {
-            font-size: 0.85rem;
-            color: #666;
-        }
+.period-teacher {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.period-break-info {
+    font-size: 0.75rem;
+    color: #5f6b8a;
+    margin-top: 4px;
+}
         
         .period-time {
             position: absolute;
@@ -450,23 +467,42 @@
             color: #d32f2f;
         }
         
-        .break-cell {
-            background-color: #f5f5f5;
-            font-weight: 600;
-        }
+.break-cell {
+    background-color: #f5f5f5;
+    font-weight: 600;
+}
+
+.inter-period-break-cell {
+    background-color: #f7f8fd;
+    min-width: 90px;
+}
+
+.break-cell-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #4e5a87;
+    margin-bottom: 3px;
+}
+
+.break-cell-time {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #253056;
+}
         
         .overlap {
             background-color: #ffebee !important;
             border: 2px solid #f44336 !important;
         }
         
-        .overlap-warning {
-            position: absolute;
-            top: 2px;
-            right: 2px;
-            color: #f44336;
-            font-size: 0.8rem;
-        }
+.overlap-warning {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    color: #f44336;
+    font-size: 0.8rem;
+    cursor: help;
+}
         
         .filter-controls {
             display: flex;
@@ -475,13 +511,47 @@
             flex-wrap: wrap;
         }
         
-        .filter-controls select {
-            padding: 10px 15px;
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            background-color: white;
-            min-width: 200px;
-        }
+.filter-controls select {
+    padding: 10px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: white;
+    min-width: 200px;
+}
+
+/*.filter-controls select[multiple] {
+    min-height: 150px;
+}*/
+
+.overlap-progress {
+    margin-bottom: 16px;
+    background-color: #f8fbff;
+    border: 1px solid #d9e7ff;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.overlap-progress-label {
+    font-size: 0.9rem;
+    color: #3b4a7a;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.overlap-progress-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background-color: #e6edff;
+    overflow: hidden;
+}
+
+.overlap-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3f51b5, #5c6bc0);
+    transition: width 0.15s linear;
+}
         
         .modal {
             display: none;
@@ -579,7 +649,7 @@
     border-radius: 8px;
     padding: 12px;
     display: grid;
-    grid-template-columns: 70px 1fr 1fr 160px;
+    grid-template-columns: 70px 1fr 1fr 1fr 160px;
     gap: 10px;
     align-items: end;
     background-color: #fff;
