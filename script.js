@@ -381,7 +381,7 @@
             state.timetableData = {};
             let processedCount = 0;
             
-            if (state.excelFormat === 'state_2025') {
+            if (state.excelFormat === 'teacher_wise') {
                 processedCount = processStateTimetableWorkbook(workbook);
             } else {
                 // Process each sheet
@@ -1286,24 +1286,34 @@
             
             let html = '';
             teacherFilters.forEach(teacherFilter => {
-                // Find all classes where this teacher teaches
-                const teacherClasses = {};
-                const classNames = Object.keys(state.timetableData);
+                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const teacherGrid = {};
+                dayOrder.forEach(day => {
+                    teacherGrid[day] = {};
+                });
                 
-                classNames.forEach(className => {
+                let maxPeriods = 0;
+                let hasAnyEntry = false;
+                
+                Object.keys(state.timetableData).forEach(className => {
                     const classData = state.timetableData[className];
                     classData.days.forEach(day => {
+                        maxPeriods = Math.max(maxPeriods, day.periods.length);
                         day.periods.forEach(period => {
                             if (period.teacherName === teacherFilter) {
-                                if (!teacherClasses[className]) teacherClasses[className] = {};
-                                if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
-                                teacherClasses[className][day.dayName].push(period);
+                                hasAnyEntry = true;
+                                if (!teacherGrid[day.dayName]) teacherGrid[day.dayName] = {};
+                                if (!teacherGrid[day.dayName][period.period]) teacherGrid[day.dayName][period.period] = [];
+                                teacherGrid[day.dayName][period.period].push({
+                                    className,
+                                    subject: period.subject || 'No Subject'
+                                });
                             }
                         });
                     });
                 });
                 
-                if (Object.keys(teacherClasses).length === 0) {
+                if (!hasAnyEntry) {
                     html += `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
                     return;
                 }
@@ -1311,30 +1321,23 @@
                 html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
                 html += '<table class="timetable">';
                 html += '<thead><tr><th>Day/Period</th>';
-                
-                // Get all classes this teacher teaches in
-                const classes = Object.keys(teacherClasses);
-                
-                classes.forEach(className => {
-                    html += `<th>${className}</th>`;
-                });
+                for (let i = 1; i <= maxPeriods; i++) {
+                    const headerTime = getPeriodTime(i);
+                    html += `<th><div>P${i}</div><div class="period-header-time">${headerTime}</div></th>`;
+                }
                 
                 html += '</tr></thead><tbody>';
-                
-                // Data rows
-                const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
                 
                 dayOrder.forEach(dayName => {
                     html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
                     
-                    classes.forEach(className => {
-                        const dayPeriods = teacherClasses[className][dayName] || [];
+                    for (let p = 1; p <= maxPeriods; p++) {
+                        const entries = (teacherGrid[dayName] && teacherGrid[dayName][p]) ? teacherGrid[dayName][p] : [];
                         let periodInfo = '';
                         
-                        if (dayPeriods.length > 0) {
-                            // Show all periods for this teacher in this class on this day
-                            const periodText = dayPeriods.map(p => 
-                                `P${p.period}: ${p.subject || 'No Subject'}`
+                        if (entries.length > 0) {
+                            const periodText = entries.map(entry =>
+                                `${entry.className}: ${entry.subject}`
                             ).join('<br>');
                             
                             periodInfo = `
@@ -1343,7 +1346,7 @@
                         }
                         
                         html += `<td class="period-cell">${periodInfo}</td>`;
-                    });
+                    }
                     
                     html += '</tr>';
                 });
