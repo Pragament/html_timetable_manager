@@ -152,6 +152,7 @@
             
             document.getElementById('applyFilterBtn').addEventListener('click', renderTimetable);
             document.getElementById('checkOverlapsBtn').addEventListener('click', runOverlapCheckWithProgress);
+            document.getElementById('exportOverlapsBtn').addEventListener('click', exportOverlapsCSV);
             document.getElementById('exportTimetableBtn').addEventListener('click', exportTimetable);
             document.getElementById('goToUploadBtn').addEventListener('click', function() {
                 document.querySelector('.tab[data-target="upload-timetable-section"]').click();
@@ -1356,6 +1357,91 @@
             } finally {
                 checkBtn.disabled = false;
                 checkBtn.innerHTML = originalLabel;
+                state.overlapCheckInProgress = false;
+                setTimeout(() => updateOverlapProgress('', 0, false), 900);
+            }
+        }
+        
+        function escapeCSVField(value) {
+            const stringValue = String(value ?? '');
+            const escapedValue = stringValue.replace(/"/g, '""');
+            return `"${escapedValue}"`;
+        }
+        
+        async function exportOverlapsCSV() {
+            if (!state.timetableData) {
+                alert("No timetable data loaded.");
+                return;
+            }
+            
+            if (state.overlapCheckInProgress) return;
+            state.overlapCheckInProgress = true;
+            
+            const exportBtn = document.getElementById('exportOverlapsBtn');
+            const originalLabel = exportBtn.innerHTML;
+            const checkBtn = document.getElementById('checkOverlapsBtn');
+            const originalCheckLabel = checkBtn.innerHTML;
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+            checkBtn.disabled = true;
+            checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            
+            try {
+                await checkForOverlaps();
+                renderTimetable();
+                
+                const overlapRows = [];
+                Object.keys(state.timetableData).forEach(className => {
+                    const classData = state.timetableData[className];
+                    classData.days.forEach(day => {
+                        day.periods.forEach(period => {
+                            if (period.overlap) {
+                                overlapRows.push({
+                                    className,
+                                    day: day.dayName,
+                                    period: `P${period.period}`,
+                                    teacher: period.teacherName || '',
+                                    subject: period.subject || '',
+                                    time: period.time || '',
+                                    overlapInfo: period.overlapInfo || ''
+                                });
+                            }
+                        });
+                    });
+                });
+                
+                if (overlapRows.length === 0) {
+                    alert("No overlaps found to export.");
+                    return;
+                }
+                
+                let csv = 'Class,Day,Period,Teacher,Subject,Time,Conflict Details\n';
+                overlapRows.forEach(row => {
+                    csv += [
+                        escapeCSVField(row.className),
+                        escapeCSVField(row.day),
+                        escapeCSVField(row.period),
+                        escapeCSVField(row.teacher),
+                        escapeCSVField(row.subject),
+                        escapeCSVField(row.time),
+                        escapeCSVField(row.overlapInfo)
+                    ].join(',') + '\n';
+                });
+                
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'timetable_overlaps.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.innerHTML = originalLabel;
+                checkBtn.disabled = false;
+                checkBtn.innerHTML = originalCheckLabel;
                 state.overlapCheckInProgress = false;
                 setTimeout(() => updateOverlapProgress('', 0, false), 900);
             }
