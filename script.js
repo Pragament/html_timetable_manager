@@ -1607,7 +1607,7 @@
                     csv += `${className},${dayName}`;
                     
                     dayData.periods.forEach(period => {
-                        if (period.subject && period.teacherName) {
+                        if (period.subject || period.teacherName || period.teacherId) {
                             csv += `,${period.teacherId || ''}:${period.teacherName}:${period.subject}`;
                         } else {
                             csv += ',';
