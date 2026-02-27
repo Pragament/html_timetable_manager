@@ -835,6 +835,30 @@
             return getDefaultPeriodTime(periodNumber);
         }
         
+        function normalizeSubjectName(subject) {
+            return (subject || '').trim().toLowerCase();
+        }
+        
+        function getUniqueSubjectMap() {
+            const subjectMap = new Map();
+            if (!state.timetableData) return subjectMap;
+            
+            Object.keys(state.timetableData).forEach(className => {
+                const classData = state.timetableData[className];
+                classData.days.forEach(day => {
+                    day.periods.forEach(period => {
+                        const label = (period.subject || '').trim();
+                        const key = normalizeSubjectName(label);
+                        if (key && !subjectMap.has(key)) {
+                            subjectMap.set(key, label);
+                        }
+                    });
+                });
+            });
+            
+            return subjectMap;
+        }
+        
         // Update timetable summary
         function updateTimetableSummary() {
             if (!state.timetableData) return;
@@ -909,22 +933,20 @@
                 teacherScheduleFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
             });
             
-            // Update subject filter
-            const subjects = new Set();
-            classes.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.subject) subjects.add(period.subject);
-                    });
-                });
+            const subjectFilter = document.getElementById('subjectFilter');
+            const selectedSubject = subjectFilter.value;
+            subjectFilter.innerHTML = '<option value="">Select Subject</option>';
+            
+            const uniqueSubjects = Array.from(getUniqueSubjectMap().entries())
+                .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
+            
+            uniqueSubjects.forEach(([subjectKey, subjectLabel]) => {
+                subjectFilter.innerHTML += `<option value="${subjectKey}">${subjectLabel}</option>`;
             });
             
-            const subjectFilter = document.getElementById('subjectFilter');
-            subjectFilter.innerHTML = '<option value="">Select Subject</option>';
-            subjects.forEach(subject => {
-                subjectFilter.innerHTML += `<option value="${subject}">${subject}</option>`;
-            });
+            if (selectedSubject && uniqueSubjects.some(([key]) => key === selectedSubject)) {
+                subjectFilter.value = selectedSubject;
+            }
         }
         
         // Render timetable
@@ -1109,12 +1131,14 @@
         }
         
         // Generate subject timetable HTML
-        function generateSubjectTimetableHTML(subjectFilter) {
-            if (!subjectFilter) {
+        function generateSubjectTimetableHTML(subjectFilterKey) {
+            if (!subjectFilterKey) {
                 return '<div class="empty-state"><p>Please select a subject to view its schedule.</p></div>';
             }
             
             if (!state.timetableData) return '<p>No timetable data.</p>';
+            
+            const subjectLabel = getUniqueSubjectMap().get(subjectFilterKey) || subjectFilterKey;
             
             // Find all classes where this subject is taught
             const subjectClasses = {};
@@ -1124,7 +1148,7 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        if (period.subject === subjectFilter) {
+                        if (normalizeSubjectName(period.subject) === subjectFilterKey) {
                             if (!subjectClasses[className]) subjectClasses[className] = {};
                             if (!subjectClasses[className][day.dayName]) subjectClasses[className][day.dayName] = [];
                             subjectClasses[className][day.dayName].push(period);
@@ -1134,10 +1158,10 @@
             });
             
             if (Object.keys(subjectClasses).length === 0) {
-                return `<div class="empty-state"><p>No schedule found for subject: ${subjectFilter}</p></div>`;
+                return `<div class="empty-state"><p>No schedule found for subject: ${subjectLabel}</p></div>`;
             }
             
-            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectFilter}</h3>`;
+            let html = `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectLabel}</h3>`;
             html += '<table class="timetable">';
             html += '<thead><tr><th>Day/Period</th>';
             
