@@ -909,7 +909,8 @@
         function updateClassFilters() {
             if (!state.timetableData) return;
             
-            const classes = Object.keys(state.timetableData);
+            const classes = Object.keys(state.timetableData)
+                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');
@@ -935,16 +936,18 @@
                     });
                 });
             });
+            const sortedTeachers = Array.from(teachers)
+                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
             
             const teacherFilter = document.getElementById('teacherFilter');
             teacherFilter.innerHTML = '<option value="">Select Teacher</option>';
-            teachers.forEach(teacher => {
+            sortedTeachers.forEach(teacher => {
                 teacherFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
             });
             
             const teacherScheduleFilter = document.getElementById('teacherScheduleFilter');
             teacherScheduleFilter.innerHTML = '<option value="">Select Teacher</option>';
-            teachers.forEach(teacher => {
+            sortedTeachers.forEach(teacher => {
                 teacherScheduleFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
             });
             
