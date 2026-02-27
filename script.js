@@ -594,6 +594,10 @@
                             <label for="specialDuration-P${i}">Special Duration (minutes)</label>
                             <input type="number" id="specialDuration-P${i}" min="1" value="45">
                         </div>
+                        <div class="time-period-fields">
+                            <label for="breakAfter-P${i}">Break After P${i} (minutes)</label>
+                            <input type="number" id="breakAfter-P${i}" min="0" value="0">
+                        </div>
                         <div class="time-period-preview" id="timePreview-P${i}">--:--</div>
                     </div>
                 `;
@@ -615,6 +619,7 @@
             for (let i = 1; i <= numPeriods; i++) {
                 const typeSelect = document.getElementById(`periodType-P${i}`);
                 const specialDurationInput = document.getElementById(`specialDuration-P${i}`);
+                const breakAfterInput = document.getElementById(`breakAfter-P${i}`);
                 const specialWrap = document.getElementById(`specialDurationWrap-P${i}`);
                 
                 typeSelect.addEventListener('change', function() {
@@ -623,6 +628,10 @@
                 });
                 
                 specialDurationInput.addEventListener('input', function() {
+                    refreshGeneratedPeriodTimes(numPeriods);
+                });
+                
+                breakAfterInput.addEventListener('input', function() {
                     refreshGeneratedPeriodTimes(numPeriods);
                 });
             }
@@ -690,12 +699,17 @@
                     duration = specialDuration;
                 }
                 
+                const breakAfter = Number(document.getElementById(`breakAfter-${periodKey}`).value);
+                if (!Number.isFinite(breakAfter) || breakAfter < 0) {
+                    return { error: `Break after ${periodKey} must be 0 or greater.` };
+                }
+                
                 const periodStart = cursor;
                 const periodEnd = cursor + duration;
                 
                 periodTimes[periodKey] = `${formatMinutesToTime(periodStart)}-${formatMinutesToTime(periodEnd)}`;
                 periodTypes[periodKey] = isSpecial ? 'Special' : 'Regular';
-                cursor = periodEnd;
+                cursor = periodEnd + breakAfter;
             }
             
             return { periodTimes, periodTypes };

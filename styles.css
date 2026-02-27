@@ -579,7 +579,7 @@
     border-radius: 8px;
     padding: 12px;
     display: grid;
-    grid-template-columns: 70px 1fr 1fr 160px;
+    grid-template-columns: 70px 1fr 1fr 1fr 160px;
     gap: 10px;
     align-items: end;
     background-color: #fff;
