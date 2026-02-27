@@ -19,6 +19,14 @@ Separator rules:
 - `:` between `TeacherName` and `Subject`
 - `-` between `Class` and `Section` (for example `Grade-I-A`)
 
+## Excel Upload Formats
+
+Supported Excel formats in the app:
+- `Standard (Sheet-per-Class)`: One sheet per class, row-wise day timetable.
+- `STATE TIME TABLE (19.07.2025)`: Teacher-wise matrix with day blocks and period numbers.
+
+Before uploading an Excel file, choose the matching format from the Excel Format dropdown in the Upload section.
+
 ## Timetable Cleanup and Standardization Requirements
 
 ### Formatting Corrections

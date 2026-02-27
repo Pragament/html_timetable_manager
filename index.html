@@ -179,7 +179,14 @@
             <div class="upload-area" id="excelUploadArea">
                 <i class="fas fa-file-excel"></i>
                 <h3>Upload Excel Timetable File</h3>
-                <p>Upload an Excel file in the required format. Make sure it follows the template structure.</p>
+                <p>Upload an Excel file in one of the supported formats.</p>
+                <div class="form-group" style="max-width: 420px; margin: 15px auto;">
+                    <label for="excelFormatSelect">Excel Format</label>
+                    <select id="excelFormatSelect" class="form-control">
+                        <option value="legacy">Standard (Sheet-per-Class)</option>
+                        <option value="state_2025">STATE TIME TABLE (19.07.2025)</option>
+                    </select>
+                </div>
                 <input type="file" id="excelFileInput" accept=".xlsx, .xls">
                 <label for="excelFileInput">Choose Excel File</label>
                 <p id="selectedExcelFileName" style="margin-top: 15px; font-style: italic;"></p>

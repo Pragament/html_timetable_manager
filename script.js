@@ -8,6 +8,7 @@
             currentYear: '2026',
             periodTimes: {},
             fileType: 'excel',
+            excelFormat: 'legacy',
             overlapCheckInProgress: false
         };
         
@@ -159,6 +160,9 @@
             });
             
             // Upload timetable
+            document.getElementById('excelFormatSelect').addEventListener('change', function() {
+                state.excelFormat = this.value;
+            });
             document.getElementById('excelFileInput').addEventListener('change', handleExcelUpload);
             document.getElementById('csvFileInput').addEventListener('change', handleCSVUpload);
             document.getElementById('downloadTemplateBtn').addEventListener('click', downloadTemplate);
@@ -375,15 +379,25 @@
         function processExcelWorkbook(workbook) {
             // Clear previous data
             state.timetableData = {};
+            let processedCount = 0;
             
-            // Process each sheet
-            workbook.SheetNames.forEach(sheetName => {
-                const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-                
-                // Process the data based on the template format
-                processExcelSheetData(sheetName, jsonData);
-            });
+            if (state.excelFormat === 'state_2025') {
+                processedCount = processStateTimetableWorkbook(workbook);
+            } else {
+                // Process each sheet
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    // Process the data based on the template format
+                    processExcelSheetData(sheetName, jsonData);
+                });
+                processedCount = Object.keys(state.timetableData).length;
+            }
+            
+            if (processedCount === 0) {
+                return;
+            }
             
             // Save to localStorage
             saveTimetableToStorage();
@@ -396,10 +410,152 @@
             document.getElementById('uploadStatus').style.display = 'block';
             document.getElementById('uploadDetails').innerHTML = `
                 <p><i class="fas fa-check-circle" style="color: var(--success-color);"></i> Timetable uploaded successfully!</p>
-                <p>Processed ${workbook.SheetNames.length} classes.</p>
+                <p>Processed ${processedCount} classes.</p>
             `;
             
             document.getElementById('timetableDataInfo').style.display = 'block';
+        }
+        
+        function toCleanString(value) {
+            return String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+        
+        function normalizeClassSectionLabel(value) {
+            const raw = toCleanString(value).toUpperCase();
+            if (!raw) return '';
+            
+            const compact = raw.replace(/\s+/g, '');
+            const match = compact.match(/^(?:GRADE)?([IVX]+|\d+)([A-Z])$/);
+            if (match) {
+                return `Grade-${match[1]}-${match[2]}`;
+            }
+            
+            const parts = raw.split(/\s+/).filter(Boolean);
+            if (parts.length >= 2) {
+                return `Grade-${parts[0]}-${parts[1]}`;
+            }
+            
+            return raw;
+        }
+        
+        function getStandardDayOrder() {
+            return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        }
+        
+        function processStateTimetableWorkbook(workbook) {
+            const firstSheetName = workbook.SheetNames[0];
+            if (!firstSheetName) return 0;
+            
+            const worksheet = workbook.Sheets[firstSheetName];
+            const data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+            if (data.length < 4) {
+                alert("Selected STATE format file appears invalid (expected day and period headers in rows 2 and 3).");
+                return 0;
+            }
+            
+            const dayHeaderRow = data[1] || [];
+            const periodHeaderRow = data[2] || [];
+            const dayNamesMap = {
+                MONDAY: 'Monday',
+                TUESDAY: 'Tuesday',
+                WEDNESDAY: 'Wednesday',
+                THURSDAY: 'Thursday',
+                FRIDAY: 'Friday',
+                SATURDAY: 'Saturday'
+            };
+            
+            const dayStarts = [];
+            for (let c = 0; c < dayHeaderRow.length; c++) {
+                const dayText = toCleanString(dayHeaderRow[c]).toUpperCase();
+                if (dayNamesMap[dayText]) {
+                    dayStarts.push({ dayName: dayNamesMap[dayText], startCol: c });
+                }
+            }
+            
+            if (dayStarts.length === 0) {
+                alert("Could not detect day blocks in selected STATE format file.");
+                return 0;
+            }
+            
+            const dayBlocks = [];
+            for (let i = 0; i < dayStarts.length; i++) {
+                const { dayName, startCol } = dayStarts[i];
+                const nextStart = i < dayStarts.length - 1 ? dayStarts[i + 1].startCol : periodHeaderRow.length;
+                const periodColumns = [];
+                
+                for (let c = startCol; c < nextStart; c++) {
+                    const periodNo = Number(toCleanString(periodHeaderRow[c]));
+                    if (Number.isInteger(periodNo) && periodNo > 0) {
+                        periodColumns.push({ col: c, period: periodNo });
+                    }
+                }
+                
+                if (periodColumns.length > 0) {
+                    dayBlocks.push({ dayName, periodColumns });
+                }
+            }
+            
+            if (dayBlocks.length === 0) {
+                alert("Could not detect period columns in selected STATE format file.");
+                return 0;
+            }
+            
+            const maxPeriods = dayBlocks.reduce((maxVal, block) => {
+                const blockMax = block.periodColumns.reduce((m, p) => Math.max(m, p.period), 0);
+                return Math.max(maxVal, blockMax);
+            }, 0);
+            
+            const classMap = {};
+            const ensureClass = (className) => {
+                if (!classMap[className]) {
+                    const days = getStandardDayOrder().map(dayName => ({
+                        dayName,
+                        periods: Array.from({ length: maxPeriods }, (_, idx) => ({
+                            period: idx + 1,
+                            subject: '',
+                            teacherName: '',
+                            teacherId: '',
+                            time: getPeriodTime(idx + 1),
+                            type: 'Regular',
+                            breakAfter: 0
+                        }))
+                    }));
+                    classMap[className] = { className, days };
+                }
+                return classMap[className];
+            };
+            
+            for (let r = 3; r < data.length; r++) {
+                const row = data[r] || [];
+                const teacherName = toCleanString(row[0]);
+                if (!teacherName) continue;
+                
+                dayBlocks.forEach(block => {
+                    const dayEntryForClass = (className) => ensureClass(className).days.find(d => d.dayName === block.dayName);
+                    
+                    block.periodColumns.forEach(({ col, period }) => {
+                        const classValue = normalizeClassSectionLabel(row[col]);
+                        if (!classValue) return;
+                        
+                        const dayEntry = dayEntryForClass(classValue);
+                        if (!dayEntry) return;
+                        
+                        const periodEntry = dayEntry.periods[period - 1];
+                        if (!periodEntry) return;
+                        
+                        if (periodEntry.teacherName && periodEntry.teacherName !== teacherName) {
+                            periodEntry.teacherName = `${periodEntry.teacherName} / ${teacherName}`;
+                        } else {
+                            periodEntry.teacherName = teacherName;
+                        }
+                    });
+                });
+            }
+            
+            state.timetableData = classMap;
+            return Object.keys(state.timetableData).length;
         }
         
         // Process Excel sheet data
@@ -1138,7 +1294,7 @@
                     const classData = state.timetableData[className];
                     classData.days.forEach(day => {
                         day.periods.forEach(period => {
-                            if (period.teacherName === teacherFilter && period.subject) {
+                            if (period.teacherName === teacherFilter) {
                                 if (!teacherClasses[className]) teacherClasses[className] = {};
                                 if (!teacherClasses[className][day.dayName]) teacherClasses[className][day.dayName] = [];
                                 teacherClasses[className][day.dayName].push(period);
@@ -1178,7 +1334,7 @@
                         if (dayPeriods.length > 0) {
                             // Show all periods for this teacher in this class on this day
                             const periodText = dayPeriods.map(p => 
-                                `P${p.period}: ${p.subject}`
+                                `P${p.period}: ${p.subject || 'No Subject'}`
                             ).join('<br>');
                             
                             periodInfo = `
@@ -1280,9 +1436,13 @@
         
         // Check if a date is a holiday
         function isDateHoliday(dayName) {
-            // In a real app, this would check against actual dates
-            // For demo, we'll just check for weekends
-            return dayName === 'Saturday' || dayName === 'Sunday';
+            // Only use configured holiday data; do not auto-mark weekends.
+            const normalizedDay = toCleanString(dayName).toLowerCase();
+            return state.holidays.some(holiday => {
+                if (!holiday) return false;
+                const holidayDayName = toCleanString(holiday.dayName || holiday.weekday || '').toLowerCase();
+                return holidayDayName && holidayDayName === normalizedDay;
+            });
         }
         
         function updateOverlapProgress(label, percent, visible) {
