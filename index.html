@@ -188,7 +188,9 @@
             <div class="upload-area" id="csvUploadArea" style="display: none;">
                 <i class="fas fa-file-csv"></i>
                 <h3>Upload CSV Timetable File</h3>
-                <p>Upload a CSV file with format: Class-Section,Day,P1,P2,... where each period has format: TeacherID:TeacherName:Subject</p>
+                <p>Required columns: <code>Class-Section,Day,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10</code></p>
+                <p>Each period cell must be: <code>TeacherID:TeacherName:Subject</code></p>
+                <p>Rules: use <code>-</code> in Class-Section (example <code>Grade-I-A</code>), and <code>:</code> between TeacherID, TeacherName, and Subject.</p>
                 <input type="file" id="csvFileInput" accept=".csv, .txt">
                 <label for="csvFileInput">Choose CSV File</label>
                 <p id="selectedCSVFileName" style="margin-top: 15px; font-style: italic;"></p>
