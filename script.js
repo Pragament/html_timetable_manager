@@ -7,7 +7,8 @@
             rescheduleMode: false,
             currentYear: '2026',
             periodTimes: {},
-            fileType: 'excel'
+            fileType: 'excel',
+            overlapCheckInProgress: false
         };
         
         // Sample data for demonstration
@@ -150,6 +151,7 @@
             });
             
             document.getElementById('applyFilterBtn').addEventListener('click', renderTimetable);
+            document.getElementById('checkOverlapsBtn').addEventListener('click', runOverlapCheckWithProgress);
             document.getElementById('exportTimetableBtn').addEventListener('click', exportTimetable);
             document.getElementById('goToUploadBtn').addEventListener('click', function() {
                 document.querySelector('.tab[data-target="upload-timetable-section"]').click();
@@ -839,6 +841,14 @@
             return (subject || '').trim().toLowerCase();
         }
         
+        function escapeHtmlAttribute(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+        
         function getUniqueSubjectMap() {
             const subjectMap = new Map();
             if (!state.timetableData) return subjectMap;
@@ -996,9 +1006,6 @@
             }
             
             timetableDisplay.innerHTML = html;
-            
-            // Check for overlaps if timetable is shown
-            checkForOverlaps();
         }
         
         // Generate timetable HTML
@@ -1039,9 +1046,13 @@
                         html += `<td class="holiday-cell">HOLIDAY</td>`;
                     } else {
                         const overlapClass = period.overlap ? 'overlap' : '';
+                        const overlapTooltip = period.overlapInfo || 'Teacher overlap detected.';
+                        const overlapWarningHtml = period.overlap
+                            ? `<div class="overlap-warning" title="${escapeHtmlAttribute(overlapTooltip)}" aria-label="${escapeHtmlAttribute(overlapTooltip)}"><i class="fas fa-exclamation-triangle"></i></div>`
+                            : '';
                         html += `
                             <td class="period-cell ${overlapClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
-                                ${period.overlap ? '<div class="overlap-warning"><i class="fas fa-exclamation-triangle"></i></div>' : ''}
+                                ${overlapWarningHtml}
                                 <div class="period-subject">${period.subject}</div>
                                 <div class="period-teacher">${period.teacherName}</div>
                                 <div class="period-time">${period.time}</div>
@@ -1212,61 +1223,141 @@
             return dayName === 'Saturday' || dayName === 'Sunday';
         }
         
-        // Check for overlaps in the timetable
-        function checkForOverlaps() {
-            if (!state.timetableData) return;
+        function updateOverlapProgress(label, percent, visible) {
+            const progressWrap = document.getElementById('overlapProgress');
+            const progressLabel = document.getElementById('overlapProgressLabel');
+            const progressBar = document.getElementById('overlapProgressBar');
             
-            // Reset all overlaps
+            if (visible) {
+                progressWrap.style.display = 'block';
+                progressLabel.textContent = label;
+                progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+            } else {
+                progressWrap.style.display = 'none';
+                progressBar.style.width = '0%';
+            }
+        }
+        
+        function delayFrame() {
+            return new Promise(resolve => setTimeout(resolve, 0));
+        }
+        
+        // Check for overlaps in the timetable with visible progress
+        async function checkForOverlaps() {
+            if (!state.timetableData) return 0;
+            
+            const records = [];
             Object.keys(state.timetableData).forEach(className => {
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        period.overlap = false;
+                        records.push({
+                            className,
+                            dayName: day.dayName,
+                            periodNumber: period.period,
+                            period
+                        });
                     });
                 });
             });
             
-            // Check for teacher overlaps
-            const teacherSchedule = {};
+            const totalRecords = records.length;
+            if (totalRecords === 0) return 0;
             
-            Object.keys(state.timetableData).forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        if (period.teacherName && period.teacherName !== '' && period.subject) {
-                            const key = `${day.dayName}-${period.time}-${period.teacherName}`;
-                            
-                            if (teacherSchedule[key]) {
-                                // Found an overlap
-                                teacherSchedule[key].push({ className, day: day.dayName, period: period.period });
-                                period.overlap = true;
-                            } else {
-                                teacherSchedule[key] = [{ className, day: day.dayName, period: period.period }];
-                            }
-                        }
-                    });
-                });
-            });
+            const chunkSize = 250;
+            const teacherSchedule = new Map();
             
-            // Mark all periods in overlaps
-            Object.values(teacherSchedule).forEach(periods => {
-                if (periods.length > 1) {
-                    periods.forEach(p => {
-                        const classData = state.timetableData[p.className];
-                        const dayData = classData.days.find(d => d.dayName === p.day);
-                        if (dayData) {
-                            const periodData = dayData.periods.find(per => per.period === p.period);
-                            if (periodData) {
-                                periodData.overlap = true;
-                            }
-                        }
-                    });
+            updateOverlapProgress('Preparing overlap scan...', 0, true);
+            
+            for (let i = 0; i < totalRecords; i++) {
+                const { period } = records[i];
+                period.overlap = false;
+                period.overlapInfo = '';
+                
+                if ((i + 1) % chunkSize === 0 || i === totalRecords - 1) {
+                    const progress = ((i + 1) / totalRecords) * 35;
+                    updateOverlapProgress('Preparing overlap scan...', progress, true);
+                    await delayFrame();
                 }
-            });
+            }
             
-            // Re-render if needed
-            if (document.getElementById('view-timetable-section').classList.contains('active')) {
+            for (let i = 0; i < totalRecords; i++) {
+                const current = records[i];
+                const period = current.period;
+                
+                if (period.teacherName && period.teacherName !== '' && period.subject) {
+                    const key = `${current.dayName}-${period.time}-${period.teacherName}`;
+                    if (!teacherSchedule.has(key)) {
+                        teacherSchedule.set(key, []);
+                    }
+                    teacherSchedule.get(key).push(current);
+                }
+                
+                if ((i + 1) % chunkSize === 0 || i === totalRecords - 1) {
+                    const progress = 35 + (((i + 1) / totalRecords) * 45);
+                    updateOverlapProgress('Analyzing teacher schedules...', progress, true);
+                    await delayFrame();
+                }
+            }
+            
+            const overlapGroups = Array.from(teacherSchedule.values()).filter(group => group.length > 1);
+            const totalGroups = overlapGroups.length;
+            let overlapCount = 0;
+            
+            if (totalGroups === 0) {
+                updateOverlapProgress('No overlaps found.', 100, true);
+                await delayFrame();
+                return 0;
+            }
+            
+            for (let i = 0; i < totalGroups; i++) {
+                const group = overlapGroups[i];
+                
+                group.forEach(item => {
+                    item.period.overlap = true;
+                    overlapCount++;
+                    
+                    const otherConflicts = group
+                        .filter(other => !(other.className === item.className && other.dayName === item.dayName && other.periodNumber === item.periodNumber))
+                        .map(other => `${other.className} (${other.dayName} P${other.periodNumber})`);
+                    
+                    item.period.overlapInfo = `Teacher ${item.period.teacherName} also has ${otherConflicts.join(', ')} at ${item.period.time}.`;
+                });
+                
+                if ((i + 1) % 20 === 0 || i === totalGroups - 1) {
+                    const progress = 80 + (((i + 1) / totalGroups) * 20);
+                    updateOverlapProgress('Marking overlaps...', progress, true);
+                    await delayFrame();
+                }
+            }
+            
+            updateOverlapProgress(`Overlap scan complete. ${overlapCount} conflicting periods found.`, 100, true);
+            await delayFrame();
+            return overlapCount;
+        }
+        
+        async function runOverlapCheckWithProgress() {
+            if (!state.timetableData) {
+                alert("No timetable data loaded.");
+                return;
+            }
+            
+            if (state.overlapCheckInProgress) return;
+            state.overlapCheckInProgress = true;
+            
+            const checkBtn = document.getElementById('checkOverlapsBtn');
+            const originalLabel = checkBtn.innerHTML;
+            checkBtn.disabled = true;
+            checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+            
+            try {
+                await checkForOverlaps();
                 renderTimetable();
+            } finally {
+                checkBtn.disabled = false;
+                checkBtn.innerHTML = originalLabel;
+                state.overlapCheckInProgress = false;
+                setTimeout(() => updateOverlapProgress('', 0, false), 900);
             }
         }
         

@@ -460,13 +460,14 @@
             border: 2px solid #f44336 !important;
         }
         
-        .overlap-warning {
-            position: absolute;
-            top: 2px;
-            right: 2px;
-            color: #f44336;
-            font-size: 0.8rem;
-        }
+.overlap-warning {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    color: #f44336;
+    font-size: 0.8rem;
+    cursor: help;
+}
         
         .filter-controls {
             display: flex;
@@ -475,13 +476,43 @@
             flex-wrap: wrap;
         }
         
-        .filter-controls select {
-            padding: 10px 15px;
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            background-color: white;
-            min-width: 200px;
-        }
+.filter-controls select {
+    padding: 10px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background-color: white;
+    min-width: 200px;
+}
+
+.overlap-progress {
+    margin-bottom: 16px;
+    background-color: #f8fbff;
+    border: 1px solid #d9e7ff;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.overlap-progress-label {
+    font-size: 0.9rem;
+    color: #3b4a7a;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.overlap-progress-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background-color: #e6edff;
+    overflow: hidden;
+}
+
+.overlap-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3f51b5, #5c6bc0);
+    transition: width 0.15s linear;
+}
         
         .modal {
             display: none;
