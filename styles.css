@@ -406,13 +406,17 @@
             min-width: 1000px;
         }
         
-        .timetable th {
-            background-color: var(--primary-color);
-            color: white;
-            padding: 15px;
-            text-align: center;
-            font-weight: 600;
-        }
+.timetable th {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.timetable th.break-header {
+    background-color: #5c6bc0;
+}
         
         .timetable td {
             padding: 12px;
@@ -431,10 +435,16 @@
             margin-bottom: 5px;
         }
         
-        .period-teacher {
-            font-size: 0.85rem;
-            color: #666;
-        }
+.period-teacher {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.period-break-info {
+    font-size: 0.75rem;
+    color: #5f6b8a;
+    margin-top: 4px;
+}
         
         .period-time {
             position: absolute;
@@ -450,10 +460,28 @@
             color: #d32f2f;
         }
         
-        .break-cell {
-            background-color: #f5f5f5;
-            font-weight: 600;
-        }
+.break-cell {
+    background-color: #f5f5f5;
+    font-weight: 600;
+}
+
+.inter-period-break-cell {
+    background-color: #f7f8fd;
+    min-width: 90px;
+}
+
+.break-cell-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #4e5a87;
+    margin-bottom: 3px;
+}
+
+.break-cell-time {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #253056;
+}
         
         .overlap {
             background-color: #ffebee !important;

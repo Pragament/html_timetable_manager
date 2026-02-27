@@ -686,6 +686,7 @@
             
             const periodTimes = {};
             const periodTypes = {};
+            const periodBreaks = {};
             let cursor = startMinutes;
             
             for (let i = 1; i <= numPeriods; i++) {
@@ -712,10 +713,11 @@
                 
                 periodTimes[periodKey] = `${formatMinutesToTime(periodStart)}-${formatMinutesToTime(periodEnd)}`;
                 periodTypes[periodKey] = isSpecial ? 'Special' : 'Regular';
+                periodBreaks[periodKey] = breakAfter;
                 cursor = periodEnd + breakAfter;
             }
             
-            return { periodTimes, periodTypes };
+            return { periodTimes, periodTypes, periodBreaks };
         }
         
         function refreshGeneratedPeriodTimes(numPeriods) {
@@ -768,6 +770,7 @@
                             const periodKey = `P${period.period}`;
                             const periodTime = state.periodTimes[periodKey] || getDefaultPeriodTime(period.period);
                             const periodType = plan.periodTypes[periodKey] || 'Regular';
+                            const breakAfter = plan.periodBreaks[periodKey] || 0;
                             
                             dayEntry.periods.push({
                                 period: period.period,
@@ -775,7 +778,8 @@
                                 teacherName: period.teacherName,
                                 teacherId: period.teacherId,
                                 time: periodTime,
-                                type: periodType
+                                type: periodType,
+                                breakAfter: breakAfter
                             });
                         });
                         
@@ -1017,6 +1021,13 @@
             
             // Determine number of periods from the first day
             const numPeriods = classData.days[0].periods.length;
+            const headerDay = classData.days[0];
+            const showBreakAfterPeriod = {};
+            
+            for (let i = 0; i < numPeriods; i++) {
+                const period = headerDay.periods[i];
+                showBreakAfterPeriod[i + 1] = i < numPeriods - 1 && Number(period?.breakAfter || 0) > 0;
+            }
             
             let html = '<table class="timetable">';
             
@@ -1024,6 +1035,9 @@
             html += '<thead><tr><th>Day/Period</th>';
             for (let i = 1; i <= numPeriods; i++) {
                 html += `<th>P${i}</th>`;
+                if (showBreakAfterPeriod[i]) {
+                    html += `<th class="break-header">Break</th>`;
+                }
             }
             html += '</tr></thead><tbody>';
             
@@ -1051,14 +1065,27 @@
                         const overlapWarningHtml = period.overlap
                             ? `<div class="overlap-warning" title="${escapeHtmlAttribute(overlapTooltip)}" aria-label="${escapeHtmlAttribute(overlapTooltip)}"><i class="fas fa-exclamation-triangle"></i></div>`
                             : '';
+                        const breakAfter = Number(period.breakAfter || 0);
+                        const breakInfoHtml = breakAfter > 0
+                            ? `<div class="period-break-info">Break after: ${breakAfter} min</div>`
+                            : '';
                         html += `
                             <td class="period-cell ${overlapClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
                                 ${overlapWarningHtml}
                                 <div class="period-subject">${period.subject}</div>
                                 <div class="period-teacher">${period.teacherName}</div>
+                                ${breakInfoHtml}
                                 <div class="period-time">${period.time}</div>
                             </td>
                         `;
+                    }
+                    
+                    if (showBreakAfterPeriod[period.period]) {
+                        const breakAfter = Number(period.breakAfter || 0);
+                        const breakCellHtml = breakAfter > 0
+                            ? `<div class="break-cell-title">BREAK</div><div class="break-cell-time">${breakAfter} min</div>`
+                            : `<div class="break-cell-title">-</div>`;
+                        html += `<td class="inter-period-break-cell">${breakCellHtml}</td>`;
                     }
                 });
                 
