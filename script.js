@@ -399,6 +399,8 @@
                 return;
             }
             
+            assignTeacherIdsInTimetableData();
+            
             // Save to localStorage
             saveTimetableToStorage();
             
@@ -424,6 +426,43 @@
         
         function safeLocaleCompare(a, b) {
             return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
+        }
+        
+        function assignTeacherIdsInTimetableData() {
+            if (!state.timetableData) return;
+            
+            const teacherIdMap = new Map();
+            let nextId = 1;
+            
+            Object.values(state.timetableData).forEach(classData => {
+                (classData.days || []).forEach(day => {
+                    (day.periods || []).forEach(period => {
+                        const teacherName = toCleanString(period.teacherName);
+                        const teacherId = toCleanString(period.teacherId);
+                        if (!teacherName) return;
+                        
+                        if (teacherId) {
+                            teacherIdMap.set(teacherName, teacherId);
+                            return;
+                        }
+                        
+                        if (!teacherIdMap.has(teacherName)) {
+                            teacherIdMap.set(teacherName, `T${String(nextId).padStart(4, '0')}`);
+                            nextId += 1;
+                        }
+                    });
+                });
+            });
+            
+            Object.values(state.timetableData).forEach(classData => {
+                (classData.days || []).forEach(day => {
+                    (day.periods || []).forEach(period => {
+                        const teacherName = toCleanString(period.teacherName);
+                        if (!teacherName) return;
+                        period.teacherId = teacherIdMap.get(teacherName) || toCleanString(period.teacherId);
+                    });
+                });
+            });
         }
         
         function normalizeClassSectionLabel(value) {
@@ -490,7 +529,9 @@
                 const periodColumns = [];
                 
                 for (let c = startCol; c < nextStart; c++) {
-                    const periodNo = Number(toCleanString(periodHeaderRow[c]));
+                    const periodText = toCleanString(periodHeaderRow[c]);
+                    const periodMatch = periodText.match(/(\d+)/);
+                    const periodNo = periodMatch ? Number(periodMatch[1]) : NaN;
                     if (Number.isInteger(periodNo) && periodNo > 0) {
                         periodColumns.push({ col: c, period: periodNo });
                     }
@@ -947,6 +988,8 @@
                     });
                 });
                 
+                assignTeacherIdsInTimetableData();
+                
                 // Save to localStorage
                 saveTimetableToStorage();
                 
@@ -1054,10 +1097,18 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        if (period.subject && period.subject !== '') {
+                        const hasSubject = toCleanString(period.subject) !== '';
+                        const hasTeacher = toCleanString(period.teacherName) !== '';
+                        const hasTeacherId = String(period.teacherId || '').trim() !== '';
+                        
+                        if (hasSubject || hasTeacher || hasTeacherId) {
                             periodsCount++;
-                            if (period.teacherName) teachers.add(period.teacherName);
-                            if (period.subject) subjects.add(period.subject);
+                        }
+                        if (hasTeacher) {
+                            teachers.add(toCleanString(period.teacherName));
+                        }
+                        if (hasSubject) {
+                            subjects.add(toCleanString(period.subject));
                         }
                     });
                 });
@@ -1104,7 +1155,8 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        if (period.teacherName) teachers.add(period.teacherName);
+                        const teacherLabel = toCleanString(period.teacherName);
+                        if (teacherLabel) teachers.add(teacherLabel);
                     });
                 });
             });
