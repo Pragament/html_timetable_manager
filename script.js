@@ -422,6 +422,10 @@
                 .trim();
         }
         
+        function safeLocaleCompare(a, b) {
+            return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
+        }
+        
         function normalizeClassSectionLabel(value) {
             const raw = toCleanString(value).toUpperCase();
             if (!raw) return '';
@@ -999,7 +1003,7 @@
         }
         
         function normalizeSubjectName(subject) {
-            return (subject || '').trim().toLowerCase();
+            return toCleanString(subject).toLowerCase();
         }
         
         function escapeHtmlAttribute(value) {
@@ -1018,7 +1022,7 @@
                 const classData = state.timetableData[className];
                 classData.days.forEach(day => {
                     day.periods.forEach(period => {
-                        const label = (period.subject || '').trim();
+                        const label = toCleanString(period.subject);
                         const key = normalizeSubjectName(label);
                         if (key && !subjectMap.has(key)) {
                             subjectMap.set(key, label);
@@ -1073,7 +1077,7 @@
             if (!state.timetableData) return;
             
             const classes = Object.keys(state.timetableData)
-                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a, b));
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');
@@ -1105,7 +1109,7 @@
                 });
             });
             const sortedTeachers = Array.from(teachers)
-                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a, b));
             
             const teacherFilter = document.getElementById('teacherFilter');
             const selectedTeachers = getMultiSelectValues('teacherFilter');
@@ -1129,7 +1133,7 @@
             subjectFilter.innerHTML = '';
             
             const uniqueSubjects = Array.from(getUniqueSubjectMap().entries())
-                .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }));
+                .sort((a, b) => safeLocaleCompare(a[1], b[1]));
             
             uniqueSubjects.forEach(([subjectKey, subjectLabel]) => {
                 const isSelected = selectedSubjects.includes(subjectKey) ? ' selected' : '';
@@ -1210,7 +1214,7 @@
             // Header row
             html += '<thead><tr><th>Day/Period</th>';
             for (let i = 1; i <= numPeriods; i++) {
-                const periodTime = (headerDay.periods[i - 1]?.time || '').trim();
+                const periodTime = toCleanString(headerDay.periods[i - 1]?.time);
                 const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
                 html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
                 if (showBreakAfterPeriod[i]) {
@@ -1232,8 +1236,8 @@
                 dayData.periods.forEach(period => {
                     // Check if this is a holiday
                     const isHoliday = isDateHoliday(dayName);
-                    const hasSubject = !!(period.subject && period.subject.trim() !== '');
-                    const hasTeacher = !!(period.teacherName && period.teacherName.trim() !== '');
+                    const hasSubject = toCleanString(period.subject) !== '';
+                    const hasTeacher = toCleanString(period.teacherName) !== '';
                     
                     if (!hasSubject && !hasTeacher) {
                         html += `<td class="break-cell">BREAK</td>`;
