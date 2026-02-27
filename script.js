@@ -1303,7 +1303,7 @@
                             : '';
                         const subjectHtml = hasSubject
                             ? `<div class="period-subject">${period.subject}</div>`
-                            : '<div class="period-subject">No Subject</div>';
+                            : '<div class="period-subject subject-missing" title="No subject assigned" aria-label="No subject assigned">🟡</div>';
                         const teacherHtml = hasTeacher
                             ? `<div class="period-teacher">${period.teacherName}</div>`
                             : '<div class="period-teacher">No Teacher</div>';
@@ -1362,7 +1362,7 @@
                                 if (!teacherGrid[day.dayName][period.period]) teacherGrid[day.dayName][period.period] = [];
                                 teacherGrid[day.dayName][period.period].push({
                                     className,
-                                    subject: period.subject || 'No Subject'
+                                    subject: toCleanString(period.subject)
                                 });
                             }
                         });
@@ -1393,7 +1393,7 @@
                         
                         if (entries.length > 0) {
                             const periodText = entries.map(entry =>
-                                `${entry.className}: ${entry.subject}`
+                                `${entry.className}: ${entry.subject || '<span class="no-subject-marker" title="No subject assigned" aria-label="No subject assigned">🟡</span>'}`
                             ).join('<br>');
                             
                             periodInfo = `
