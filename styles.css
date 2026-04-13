@@ -442,6 +442,19 @@
             margin-bottom: 5px;
         }
         
+        .period-subject.subject-missing {
+            margin-bottom: 0;
+            font-size: 0.9rem;
+            color: #f6b100;
+        }
+        
+        .no-subject-marker {
+            color: #f6b100;
+            font-size: 0.9rem;
+            line-height: 1;
+            vertical-align: middle;
+        }
+        
 .period-teacher {
     font-size: 0.85rem;
     color: #666;

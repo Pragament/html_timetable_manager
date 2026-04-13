@@ -27,6 +27,21 @@ Supported Excel formats in the app:
 
 Before uploading an Excel file, choose the matching format from the Excel Format dropdown in the Upload section.
 
+## Subject Mapping CSV (Teacher -> Subject)
+
+You can upload a separate mapping CSV to auto-fill missing subjects.
+
+Required columns:
+
+```csv
+Teacher Name,Teacher ID,Subject
+```
+
+Notes:
+- At least one of `Teacher Name` or `Teacher ID` must be present.
+- `Subject` is required.
+- During timetable import, if a period has teacher info but no subject, the subject is auto-filled from this mapping.
+
 ## Timetable Cleanup and Standardization Requirements
 
 ### Formatting Corrections
