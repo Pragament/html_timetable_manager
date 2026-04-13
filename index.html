@@ -203,6 +203,16 @@
                 <p id="selectedCSVFileName" style="margin-top: 15px; font-style: italic;"></p>
             </div>
             
+            <div class="upload-area" id="subjectMappingUploadArea">
+                <i class="fas fa-link"></i>
+                <h3>Upload Subject Mapping CSV</h3>
+                <p>Columns: <code>Teacher Name,Teacher ID,Subject</code></p>
+                <p>Missing subjects are auto-filled using teacher mapping during import.</p>
+                <input type="file" id="subjectMappingFileInput" accept=".csv, .txt">
+                <label for="subjectMappingFileInput">Choose Mapping CSV</label>
+                <p id="selectedSubjectMappingFileName" style="margin-top: 15px; font-style: italic;"></p>
+            </div>
+            
             <div id="uploadStatus" style="display: none;">
                 <div class="summary-card">
                     <h3>Upload Status</h3>

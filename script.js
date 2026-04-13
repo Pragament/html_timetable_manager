@@ -9,7 +9,8 @@
             periodTimes: {},
             fileType: 'excel',
             excelFormat: 'legacy',
-            overlapCheckInProgress: false
+            overlapCheckInProgress: false,
+            teacherSubjectMap: {}
         };
         
         // Sample data for demonstration
@@ -42,6 +43,7 @@
             const storedTimetable = localStorage.getItem('schoolTimetable');
             const storedHolidays = localStorage.getItem('schoolHolidays');
             const storedPeriodTimes = localStorage.getItem('periodTimes');
+            const storedTeacherSubjectMap = localStorage.getItem('teacherSubjectMap');
             
             if (storedTimetable) {
                 state.timetableData = JSON.parse(storedTimetable);
@@ -57,6 +59,10 @@
             
             if (storedPeriodTimes) {
                 state.periodTimes = JSON.parse(storedPeriodTimes);
+            }
+            
+            if (storedTeacherSubjectMap) {
+                state.teacherSubjectMap = JSON.parse(storedTeacherSubjectMap);
             }
         }
         
@@ -75,6 +81,10 @@
         // Save period times to localStorage
         function savePeriodTimesToStorage() {
             localStorage.setItem('periodTimes', JSON.stringify(state.periodTimes));
+        }
+        
+        function saveTeacherSubjectMapToStorage() {
+            localStorage.setItem('teacherSubjectMap', JSON.stringify(state.teacherSubjectMap || {}));
         }
         
         // Set up tab navigation
@@ -165,6 +175,7 @@
             });
             document.getElementById('excelFileInput').addEventListener('change', handleExcelUpload);
             document.getElementById('csvFileInput').addEventListener('change', handleCSVUpload);
+            document.getElementById('subjectMappingFileInput').addEventListener('change', handleSubjectMappingUpload);
             document.getElementById('downloadTemplateBtn').addEventListener('click', downloadTemplate);
             
             // Time modal
@@ -192,6 +203,10 @@
             
             // If timetable data exists, show it
             if (state.timetableData) {
+                const updatedPeriods = autoFillMissingSubjectsFromTeacherMap();
+                if (updatedPeriods > 0) {
+                    saveTimetableToStorage();
+                }
                 updateTimetableSummary();
                 renderTimetable();
             }
@@ -375,6 +390,26 @@
             reader.readAsText(file);
         }
         
+        function handleSubjectMappingUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('selectedSubjectMappingFileName').textContent = `Selected file: ${file.name}`;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const csvData = e.target.result;
+                    processSubjectMappingCSV(csvData, file.name);
+                } catch (error) {
+                    console.error("Error reading subject mapping CSV file:", error);
+                    alert("Error reading subject mapping CSV file. Please make sure it's in the correct format.");
+                }
+            };
+            
+            reader.readAsText(file);
+        }
+        
         // Process uploaded Excel workbook
         function processExcelWorkbook(workbook) {
             // Clear previous data
@@ -400,6 +435,7 @@
             }
             
             assignTeacherIdsInTimetableData();
+            autoFillMissingSubjectsFromTeacherMap();
             
             // Save to localStorage
             saveTimetableToStorage();
@@ -762,6 +798,111 @@
             return result;
         }
         
+        function buildTeacherSubjectMapKey(teacherName, teacherId) {
+            const id = toCleanString(teacherId).toLowerCase();
+            const name = toCleanString(teacherName).toLowerCase();
+            if (id) return `id:${id}`;
+            if (name) return `name:${name}`;
+            return '';
+        }
+        
+        function getMappedSubjectForPeriod(period) {
+            if (!state.teacherSubjectMap) return '';
+            const keyById = buildTeacherSubjectMapKey('', period.teacherId);
+            if (keyById && state.teacherSubjectMap[keyById]) {
+                return toCleanString(state.teacherSubjectMap[keyById]);
+            }
+            
+            const keyByName = buildTeacherSubjectMapKey(period.teacherName, '');
+            if (keyByName && state.teacherSubjectMap[keyByName]) {
+                return toCleanString(state.teacherSubjectMap[keyByName]);
+            }
+            
+            return '';
+        }
+        
+        function autoFillMissingSubjectsFromTeacherMap() {
+            if (!state.timetableData || !state.teacherSubjectMap) return 0;
+            
+            let updatedCount = 0;
+            Object.values(state.timetableData).forEach(classData => {
+                (classData.days || []).forEach(day => {
+                    (day.periods || []).forEach(period => {
+                        const hasSubject = toCleanString(period.subject) !== '';
+                        if (hasSubject) return;
+                        const mappedSubject = getMappedSubjectForPeriod(period);
+                        if (!mappedSubject) return;
+                        period.subject = mappedSubject;
+                        updatedCount += 1;
+                    });
+                });
+            });
+            
+            return updatedCount;
+        }
+        
+        function processSubjectMappingCSV(csvData, fileName) {
+            const lines = csvData.split('\n').filter(line => line.trim() !== '');
+            if (lines.length < 2) {
+                alert("Subject mapping CSV is empty or has invalid format.");
+                return;
+            }
+            
+            const headerCells = parseCSVLine(lines[0]).map(cell => toCleanString(cell).toLowerCase());
+            const teacherNameIndex = headerCells.findIndex(h => h === 'teacher name' || h === 'teachername');
+            const teacherIdIndex = headerCells.findIndex(h => h === 'teacher id' || h === 'teacherid' || h === 'id');
+            const subjectIndex = headerCells.findIndex(h => h === 'subject');
+            
+            if (teacherNameIndex === -1 && teacherIdIndex === -1) {
+                alert("Subject mapping CSV must include Teacher Name or Teacher ID column.");
+                return;
+            }
+            if (subjectIndex === -1) {
+                alert("Subject mapping CSV must include Subject column.");
+                return;
+            }
+            
+            const parsedMap = {};
+            let importedRows = 0;
+            for (let i = 1; i < lines.length; i++) {
+                const cells = parseCSVLine(lines[i]);
+                const teacherName = toCleanString(cells[teacherNameIndex]);
+                const teacherId = toCleanString(cells[teacherIdIndex]);
+                const subject = toCleanString(cells[subjectIndex]);
+                if (!subject) continue;
+                
+                const key = buildTeacherSubjectMapKey(teacherName, teacherId);
+                if (!key) continue;
+                
+                parsedMap[key] = subject;
+                importedRows += 1;
+            }
+            
+            if (importedRows === 0) {
+                alert("No valid rows found in subject mapping CSV.");
+                return;
+            }
+            
+            state.teacherSubjectMap = {
+                ...(state.teacherSubjectMap || {}),
+                ...parsedMap
+            };
+            saveTeacherSubjectMapToStorage();
+            
+            const updatedPeriods = autoFillMissingSubjectsFromTeacherMap();
+            if (updatedPeriods > 0) {
+                saveTimetableToStorage();
+                updateTimetableSummary();
+                renderTimetable();
+            }
+            
+            document.getElementById('uploadStatus').style.display = 'block';
+            document.getElementById('uploadDetails').innerHTML = `
+                <p><i class="fas fa-check-circle" style="color: var(--success-color);"></i> Subject mapping uploaded successfully!</p>
+                <p>Imported ${importedRows} teacher-subject mappings from ${fileName}. Auto-filled ${updatedPeriods} missing subjects.</p>
+            `;
+        }
+        
         // Open time input modal
         function openTimeInputModal(numPeriods) {
             const container = document.getElementById('timeInputContainer');
@@ -989,6 +1130,7 @@
                 });
                 
                 assignTeacherIdsInTimetableData();
+                autoFillMissingSubjectsFromTeacherMap();
                 
                 // Save to localStorage
                 saveTimetableToStorage();
