@@ -1025,6 +1025,7 @@
         <div id="importStatus"></div>
         <div class="btnrow">
           <button class="secondary sm" id="loadSampleBtn">Load sample data</button>
+          <button class="secondary sm" id="exportImportCsvBtn">Download CSV</button>
           <button class="secondary sm" id="clearImportBtn">Clear import</button>
         </div>
       </div>
@@ -2483,6 +2484,11 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
           setTimeout(() => status.innerHTML = "", 4000);
         });
 
+        const exportImportBtn = document.getElementById("exportImportCsvBtn");
+        if (exportImportBtn) {
+          exportImportBtn.addEventListener("click", exportTeacherScheduleCsv);
+        }
+
         document.getElementById("clearImportBtn").addEventListener("click", () => {
           state.importedTeachers = [];
           state.classSubjects = {};
@@ -2493,6 +2499,21 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
           save();
           renderAll();
         });
+      }
+
+      function exportTeacherScheduleCsv() {
+        const rows = (state.importedTeachers || []).map(t => ({
+          Subject: t.subject || "",
+          Teacher: t.teacher || "",
+          Classes: (t.classes || []).join(";") || "",
+          Periods: t.periodsPerWeek || ""
+        }));
+        if (rows.length === 0) {
+          alert("No imported teacher schedule data available.");
+          return;
+        }
+        const csv = Papa.unparse(rows, { quotes: true });
+        downloadTextFile("teacher-schedule.csv", csv, "text/csv;charset=utf-8;");
       }
 
       // ---- CSV EXPORT ----
