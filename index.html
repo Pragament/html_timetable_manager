@@ -87,11 +87,11 @@
                 <div class="setup-panel">
                     <h3><i class="fas fa-chalkboard-teacher"></i> Teacher List</h3>
                     <p>CSV columns: <code>Teacher ID,Teacher Name,Class Teacher Subject,Class Teacher Grade,Class Teacher Section,Phone,Email</code></p>
-                    <input type="file" id="teacherListFileInput" accept=".csv,.txt">
+                    <input type="file" id="teacherListFileInput" accept=".csv,.txt" style="display:none">
                     <div class="setup-actions">
-                        <label class="btn btn-primary" for="teacherListFileInput">
-                            <i class="fas fa-file-csv"></i> Import Teachers CSV
-                        </label>
+                        <button class="btn btn-primary" onclick="document.getElementById('teacherListFileInput').click()">
+                            <i class="fas fa-file-upload"></i> Import Teachers CSV
+                        </button>
                         <button class="btn btn-outline" id="exportTeachersBtn">
                             <i class="fas fa-file-download"></i> Export Teachers CSV
                         </button>
@@ -107,11 +107,11 @@
                 <div class="setup-panel">
                     <h3><i class="fas fa-link"></i> Teacher Grade-Section Subject Mapping</h3>
                     <p>CSV columns: <code>Teacher ID,Teacher Name,Grade-Section,Subject,Periods Per Week</code></p>
-                    <input type="file" id="teacherMappingFileInput" accept=".csv,.txt">
+                    <input type="file" id="teacherMappingFileInput" accept=".csv,.txt" style="display:none">
                     <div class="setup-actions">
-                        <label class="btn btn-primary" for="teacherMappingFileInput">
-                            <i class="fas fa-file-csv"></i> Import Mapping CSV
-                        </label>
+                        <button class="btn btn-primary" onclick="document.getElementById('teacherMappingFileInput').click()">
+                            <i class="fas fa-file-upload"></i> Import Mapping CSV
+                        </button>
                         <button class="btn btn-outline" id="exportMappingBtn">
                             <i class="fas fa-file-download"></i> Export Mapping CSV
                         </button>
@@ -531,8 +531,20 @@
                     
                     <form id="teacherMappingForm" onsubmit="event.preventDefault();">
                         <div class="form-group">
-                            <label for="mappingFormTeacherName">Teacher Name</label>
-                            <select id="mappingFormTeacherName" class="form-control" required>
+                            <label>Teacher Name</label>
+                            <div class="custom-multiselect" id="teacherNameDropdown">
+                                <div class="cms-trigger" id="teacherNameTrigger" onclick="toggleCmsDropdown('teacherNameDropdown')">
+                                    <span id="teacherNameDisplay">Select Teacher</span>
+                                    <i class="fas fa-chevron-down cms-arrow" id="teacherNameArrow"></i>
+                                </div>
+                                <div class="cms-panel" id="teacherNamePanel">
+                                    <div class="cms-search-wrap">
+                                        <input class="cms-search" type="text" placeholder="Search teacher..." oninput="filterCmsOptions('teacherNamePanel', this.value)">
+                                    </div>
+                                    <div class="cms-options" id="teacherNameOptions"></div>
+                                </div>
+                            </div>
+                            <select id="mappingFormTeacherName" style="display:none;" required>
                                 <option value="">Select Teacher</option>
                             </select>
                         </div>

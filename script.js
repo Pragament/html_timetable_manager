@@ -421,10 +421,15 @@
         }
 
         function parseCSVRows(csvData) {
-            return csvData
-                .split(/\r?\n/)
-                .filter(line => line.trim() !== '')
-                .map(line => parseCSVLine(line).map(cell => toCleanString(cell)));
+            if (!csvData || !csvData.trim()) return [];
+            const lines = csvData.split(/\r?\n/);
+            const rows = [];
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (line.trim() === '') continue;
+                rows.push(parseCSVLine(line));
+            }
+            return rows;
         }
 
         function findHeaderIndex(headers, names) {
@@ -437,47 +442,53 @@
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                const rows = parseCSVRows(e.target.result);
-                if (rows.length < 2) {
-                    alert("Teacher CSV is empty or invalid.");
-                    return;
+                try {
+                    const rows = parseCSVRows(e.target.result);
+                    if (rows.length < 2) { alert('Teacher CSV is empty or invalid.'); return; }
+
+                    const headers = rows[0].map(h => toCleanString(h).toLowerCase());
+                    const idIndex       = findHeaderIndex(headers, ['teacher id', 'teacherid', 'id']);
+                    const nameIndex     = findHeaderIndex(headers, ['teacher name', 'teachername', 'name']);
+                    const subjectsIndex = findHeaderIndex(headers, ['class teacher subject', 'subjects', 'subject', 'subject taught']);
+                    const gradeIndex    = findHeaderIndex(headers, ['class teacher grade', 'class grade', 'grade']);
+                    const sectionIndex  = findHeaderIndex(headers, ['class teacher section', 'section']);
+                    const phoneIndex    = findHeaderIndex(headers, ['phone', 'mobile']);
+                    const emailIndex    = findHeaderIndex(headers, ['email']);
+
+                    if (nameIndex === -1) { alert('Teacher CSV must include a Teacher Name column.'); return; }
+
+                    const imported = rows.slice(1)
+                        .map((cells, index) => ({
+                            id: toCleanString(cells[idIndex]) || `T${String((state.teachers || []).length + index + 1).padStart(4, '0')}`,
+                            name: toCleanString(cells[nameIndex]),
+                            classTeacherSubject: subjectsIndex >= 0 ? toCleanString(cells[subjectsIndex]) : '',
+                            classTeacherGrade:   gradeIndex   >= 0 ? toCleanString(cells[gradeIndex])   : '',
+                            classTeacherSection: sectionIndex >= 0 ? toCleanString(cells[sectionIndex]) : '',
+                            phone: phoneIndex >= 0 ? toCleanString(cells[phoneIndex]) : '',
+                            email: emailIndex >= 0 ? toCleanString(cells[emailIndex]) : ''
+                        }))
+                        .filter(row => row.name);
+
+                    if (imported.length === 0) { alert('No valid teacher rows found in CSV.'); return; }
+
+                    state.teachers = mergeTeachers(state.teachers || [], imported);
+                    rebuildTeacherSubjectMapFromMasterData();
+                    saveMasterDataToStorage();
+                    saveTeacherSubjectMapToStorage();
+                    renderTeacherMasterTable();
+                    renderTeacherMappingTable();
+                    updateSetupSummary();
+                    updateClassFilters();
+                    renderAIPrompt();
+                    renderMappingFormDropdowns();   // refresh teacher name dropdown in Mapping Form
+                    renderFormMappingTable();
+                    alert('Imported ' + imported.length + ' teacher(s) successfully!');
+                } catch (err) {
+                    console.error(err);
+                    alert('Failed to parse Teacher CSV.');
+                } finally {
+                    event.target.value = '';
                 }
-
-                const headers = rows[0].map(header => toCleanString(header).toLowerCase());
-                const idIndex = findHeaderIndex(headers, ['teacher id', 'teacherid', 'id']);
-                const nameIndex = findHeaderIndex(headers, ['teacher name', 'teachername', 'name']);
-                const subjectsIndex = findHeaderIndex(headers, ['class teacher subject', 'subjects', 'subject', 'subject taught']);
-                const gradeIndex = findHeaderIndex(headers, ['class teacher grade', 'class grade', 'grade']);
-                const sectionIndex = findHeaderIndex(headers, ['class teacher section', 'section']);
-                const phoneIndex = findHeaderIndex(headers, ['phone', 'mobile']);
-                const emailIndex = findHeaderIndex(headers, ['email']);
-
-                if (nameIndex === -1) {
-                    alert("Teacher CSV must include Teacher Name column.");
-                    return;
-                }
-
-                const imported = rows.slice(1)
-                    .map((cells, index) => ({
-                        id: toCleanString(cells[idIndex]) || `T${String((state.teachers || []).length + index + 1).padStart(4, '0')}`,
-                        name: toCleanString(cells[nameIndex]),
-                        classTeacherSubject: subjectsIndex >= 0 ? toCleanString(cells[subjectsIndex]) : '',
-                        classTeacherGrade: gradeIndex >= 0 ? toCleanString(cells[gradeIndex]) : '',
-                        classTeacherSection: sectionIndex >= 0 ? toCleanString(cells[sectionIndex]) : '',
-                        phone: phoneIndex >= 0 ? toCleanString(cells[phoneIndex]) : '',
-                        email: emailIndex >= 0 ? toCleanString(cells[emailIndex]) : ''
-                    }))
-                    .filter(row => row.name);
-
-                state.teachers = mergeTeachers(state.teachers || [], imported);
-                rebuildTeacherSubjectMapFromMasterData();
-                saveMasterDataToStorage();
-                saveTeacherSubjectMapToStorage();
-                renderTeacherMasterTable();
-                renderTeacherMappingTable();
-                updateSetupSummary();
-                updateClassFilters();
-                renderAIPrompt();
             };
             reader.readAsText(file);
         }
@@ -488,48 +499,83 @@
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                const rows = parseCSVRows(e.target.result);
-                if (rows.length < 2) {
-                    alert("Mapping CSV is empty or invalid.");
-                    return;
+                try {
+                    const rows = parseCSVRows(e.target.result);
+                    if (rows.length < 2) { alert('Mapping CSV is empty or invalid.'); return; }
+
+                    const headers = rows[0].map(h => toCleanString(h).toLowerCase());
+                    const teacherIdIndex   = findHeaderIndex(headers, ['teacher id', 'teacherid', 'id']);
+                    const teacherNameIndex = findHeaderIndex(headers, ['teacher name', 'teachername', 'name']);
+                    const gradeIndex       = findHeaderIndex(headers, ['grade-section', 'class-section', 'class', 'grade section']);
+                    const subjectIndex     = findHeaderIndex(headers, ['subject']);
+                    const periodsIndex     = findHeaderIndex(headers, ['periods per week', 'periodsperweek', 'periods', 'weekly periods']);
+
+                    if (teacherIdIndex === -1 || teacherNameIndex === -1 || gradeIndex === -1 || subjectIndex === -1 || periodsIndex === -1) {
+                        const missing = [];
+                        if (teacherIdIndex === -1) missing.push('Teacher ID');
+                        if (teacherNameIndex === -1) missing.push('Teacher Name');
+                        if (gradeIndex === -1) missing.push('Grade-Section');
+                        if (subjectIndex === -1) missing.push('Subject');
+                        if (periodsIndex === -1) missing.push('Periods Per Week');
+                        alert('CSV validation error: Missing required column(s): ' + missing.join(', ') + '.\n\nRequired columns: Teacher ID, Teacher Name, Grade-Section, Subject, Periods Per Week');
+                        return;
+                    }
+
+                    const imported = [];
+                    for (let ri = 1; ri < rows.length; ri++) {
+                        const cells = rows[ri];
+                        // skip empty rows
+                        if (!cells || cells.length === 0 || cells.every(c => !c || !String(c).trim())) continue;
+
+                        const teacherId   = teacherIdIndex   >= 0 ? toCleanString(cells[teacherIdIndex]   || '') : '';
+                        const teacherName = teacherNameIndex >= 0 ? toCleanString(cells[teacherNameIndex] || '') : findTeacherNameById(teacherId);
+                        const rawGrade    = gradeIndex   >= 0 ? toCleanString(cells[gradeIndex]   || '') : '';
+                        const rawSubject  = subjectIndex >= 0 ? toCleanString(cells[subjectIndex]  || '') : '';
+                        const rawPeriods  = periodsIndex >= 0 ? toCleanString(cells[periodsIndex]  || '') : '1';
+
+                        const gs   = normalizeClassSectionLabel(rawGrade);
+                        const subj = rawSubject;
+
+                        // Skip rows that don't have the critical fields
+                        if (!gs && !rawGrade) { console.warn('Row ' + (ri+1) + ': skipped — no grade-section'); continue; }
+                        if (!subj) { console.warn('Row ' + (ri+1) + ': skipped — no subject'); continue; }
+                        if (!teacherId && !teacherName) { console.warn('Row ' + (ri+1) + ': skipped — no teacher'); continue; }
+
+                        if (gs) ensureGradeSectionExists(gs);
+                        if (subj) ensureSubjectExists(subj);
+
+                        imported.push({
+                            id: 'M' + Date.now() + '-' + ri,
+                            teacherId: teacherId,
+                            teacherName: teacherName || findTeacherNameById(teacherId),
+                            gradeSection: gs || rawGrade,
+                            subject: subj,
+                            periodsPerWeek: rawPeriods
+                        });
+                    }
+
+                    if (imported.length === 0) { alert('No valid mapping rows found in CSV.'); return; }
+
+                    state.teacherMappings = mergeTeacherMappings(state.teacherMappings || [], imported);
+                    ensureMappingIdsGenerated();
+                    rebuildTeacherSubjectMapFromMasterData();
+                    saveMasterDataToStorage();
+                    saveTeacherSubjectMapToStorage();
+                    renderTeacherMappingTable();
+                    renderClassSectionsTable();
+                    renderSubjectsTable();
+                    updateSetupSummary();
+                    updateClassFilters();
+                    renderAIPrompt();
+                    renderMappingFormDropdowns();  // refresh dropdowns in Mapping Form tab
+                    renderFormMappingTable();
+                    alert('Imported ' + imported.length + ' mapping row(s) successfully!');
+                } catch (err) {
+                    console.error('Mapping CSV import error:', err);
+                    alert('Failed to parse Mapping CSV.\n\nError: ' + (err && err.message ? err.message : String(err)));
+                } finally {
+                    event.target.value = '';
                 }
-
-                const headers = rows[0].map(header => toCleanString(header).toLowerCase());
-                const teacherIdIndex = findHeaderIndex(headers, ['teacher id', 'teacherid', 'id']);
-                const teacherNameIndex = findHeaderIndex(headers, ['teacher name', 'teachername', 'name']);
-                const gradeIndex = findHeaderIndex(headers, ['grade-section', 'class-section', 'class', 'grade section']);
-                const subjectIndex = findHeaderIndex(headers, ['subject']);
-                const periodsIndex = findHeaderIndex(headers, ['periods per week', 'periodsperweek', 'periods', 'weekly periods']);
-
-                if (gradeIndex === -1 || subjectIndex === -1) {
-                    alert("Mapping CSV must include Grade-Section and Subject columns.");
-                    return;
-                }
-
-                const imported = rows.slice(1)
-                    .map((cells, index) => {
-                        const teacherId = teacherIdIndex >= 0 ? toCleanString(cells[teacherIdIndex]) : '';
-                        const teacherName = teacherNameIndex >= 0 ? toCleanString(cells[teacherNameIndex]) : findTeacherNameById(teacherId);
-                        return {
-                            id: `M${Date.now()}-${index}`,
-                            teacherId,
-                            teacherName,
-                            gradeSection: normalizeClassSectionLabel(cells[gradeIndex]),
-                            subject: toCleanString(cells[subjectIndex]),
-                            periodsPerWeek: periodsIndex >= 0 ? toCleanString(cells[periodsIndex]) : ''
-                        };
-                    })
-                    .filter(row => row.gradeSection && row.subject && (row.teacherId || row.teacherName));
-
-                state.teacherMappings = mergeTeacherMappings(state.teacherMappings || [], imported);
-                ensureMappingIdsGenerated();
-                rebuildTeacherSubjectMapFromMasterData();
-                saveMasterDataToStorage();
-                saveTeacherSubjectMapToStorage();
-                renderTeacherMappingTable();
-                updateSetupSummary();
-                updateClassFilters();
-                renderAIPrompt();
             };
             reader.readAsText(file);
         }
@@ -1546,29 +1592,41 @@ Return CSV now.`;
             const cleaned = toCleanString(value);
             if (!cleaned) return '';
 
-            const hyphenated = cleaned.replace(/\s*-\s*/g, '-');
-            const hyphenMatch = hyphenated.match(/^GRADE-?([IVX]+|\d+)-([A-Z])$/i);
-            if (hyphenMatch) {
-                return `Grade-${hyphenMatch[1].toUpperCase()}-${hyphenMatch[2].toUpperCase()}`;
+            const upper = cleaned.toUpperCase().replace(/\s+/g, ' ').trim();
+
+            // Already in canonical form: Grade-5-A or Grade-IX-B
+            const canonical = upper.match(/^GRADE-([\w]+)-([A-Z])$/i);
+            if (canonical) {
+                return 'Grade-' + canonical[1] + '-' + canonical[2].toUpperCase();
             }
 
-            const raw = cleaned.toUpperCase();
-            
-            const compact = raw.replace(/\s+/g, '');
-            const match = compact.match(/^(?:GRADE)?([IVX]+|\d+)([A-Z])$/);
-            if (match) {
-                return `Grade-${match[1]}-${match[2]}`;
+            // "Grade 5 A" or "Grade IX A"
+            const spaced = upper.match(/^GRADE\s+([\w]+)\s+([A-Z])$/);
+            if (spaced) {
+                return 'Grade-' + spaced[1] + '-' + spaced[2];
             }
-            
-            const parts = raw.split(/\s+/).filter(Boolean);
-            if (parts.length >= 3 && parts[0] === 'GRADE') {
-                return `Grade-${parts[1]}-${parts[2]}`;
+
+            // "5-A" or "IX-B" (no Grade prefix)
+            const hyphen = upper.match(/^([\w]+)-([A-Z])$/);
+            if (hyphen) {
+                return 'Grade-' + hyphen[1] + '-' + hyphen[2];
             }
-            if (parts.length >= 2) {
-                return `Grade-${parts[0]}-${parts[1]}`;
+
+            // "5A" or "IXB" — split digit/numeral from trailing letter
+            const compact = upper.replace(/\s+/g, '');
+            const compactMatch = compact.match(/^([IVXivxLCDMlcdm\d]+)([A-Z])$/);
+            if (compactMatch) {
+                return 'Grade-' + compactMatch[1].toUpperCase() + '-' + compactMatch[2].toUpperCase();
             }
-            
-            return raw;
+
+            // "5 A" two tokens
+            const parts = upper.split(/\s+/).filter(Boolean);
+            if (parts.length === 2 && /^[\w]+$/.test(parts[0]) && /^[A-Z]$/.test(parts[1])) {
+                return 'Grade-' + parts[0] + '-' + parts[1];
+            }
+
+            // fallback — return as-is cleaned
+            return cleaned;
         }
         
         function getStandardDayOrder() {
@@ -1831,24 +1889,49 @@ Return CSV now.`;
         
         // Parse CSV line considering quoted values
         function parseCSVLine(line) {
+            // RFC-4180 compliant CSV parser
+            // Handles: quoted fields, escaped quotes (""), commas in quotes, trailing \r
             const result = [];
-            let current = '';
-            let inQuotes = false;
-            
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-                
-                if (char === '"') {
-                    inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
-                    result.push(current);
-                    current = '';
+            const raw = line.replace(/\r$/, ''); // strip trailing CR
+            let i = 0;
+            const len = raw.length;
+
+            while (i <= len) {
+                if (i === len) {
+                    result.push('');
+                    break;
+                }
+
+                if (raw[i] === '"') {
+                    // Quoted field
+                    let field = '';
+                    i++; // skip opening quote
+                    while (i < len) {
+                        if (raw[i] === '"') {
+                            if (i + 1 < len && raw[i + 1] === '"') {
+                                field += '"'; // escaped quote
+                                i += 2;
+                            } else {
+                                i++; // skip closing quote
+                                break;
+                            }
+                        } else {
+                            field += raw[i];
+                            i++;
+                        }
+                    }
+                    result.push(field.trim());
+                    // skip comma
+                    if (i < len && raw[i] === ',') i++;
                 } else {
-                    current += char;
+                    // Unquoted field — read until comma
+                    let start = i;
+                    while (i < len && raw[i] !== ',') i++;
+                    result.push(raw.slice(start, i).trim());
+                    if (i < len) i++; // skip comma
                 }
             }
-            
-            result.push(current);
+
             return result;
         }
         
@@ -3417,6 +3500,31 @@ Return CSV now.`;
             return finalId;
         }
 
+        function buildSingleSelectOptions(optionsContainerId, values, onSelectFnName) {
+            const cont = document.getElementById(optionsContainerId);
+            if (!cont) return;
+            cont.innerHTML = values.map(function(v, i) {
+                const escaped = escapeHtml(v);
+                return '<div class="cms-item" onclick="' + onSelectFnName + '(\'' + escaped.replace(/'/g, "\\'") + '\')">' +
+                    '<label style="cursor:pointer; margin:0; flex:1;">' + escaped + '</label>' +
+                    '</div>';
+            }).join('');
+        }
+
+        function selectTeacherName(name) {
+            const select = document.getElementById('mappingFormTeacherName');
+            if (select) {
+                select.value = name;
+                select.dispatchEvent(new Event('change'));
+            }
+            const disp = document.getElementById('teacherNameDisplay');
+            if (disp) {
+                disp.textContent = name || 'Select Teacher';
+            }
+            const dd = document.getElementById('teacherNameDropdown');
+            if (dd) dd.classList.remove('open');
+        }
+
         // --- CMS (Custom Multi-Select) utility functions ---
 
         function toggleCmsDropdown(containerId) {
@@ -3709,53 +3817,54 @@ Return CSV now.`;
                             });
                         }
                     } else {
-                        // Process standard mapping format
-                        if (teacherNameIndex === -1 || gradeIndex === -1 || subjectIndex === -1) {
-                            alert("CSV columns must include: Teacher Name, Grade-Section, and Subject (or Subject, Teacher, Classes, Periods).");
+                        // Standard mapping format: Validate CSV headers strictly
+                        if (teacherIdIndex === -1 || teacherNameIndex === -1 || gradeIndex === -1 || subjectIndex === -1 || periodsIndex === -1) {
+                            const missing = [];
+                            if (teacherIdIndex === -1) missing.push('Teacher ID');
+                            if (teacherNameIndex === -1) missing.push('Teacher Name');
+                            if (gradeIndex === -1) missing.push('Grade-Section');
+                            if (subjectIndex === -1) missing.push('Subject');
+                            if (periodsIndex === -1) missing.push('Periods Per Week');
+                            alert('CSV validation error: Missing required column(s): ' + missing.join(', ') + '.\n\nRequired columns: Teacher ID, Teacher Name, Grade-Section, Subject, Periods Per Week');
                             return;
                         }
 
+                        let skippedRows = 0;
                         for (let i = 1; i < rows.length; i++) {
                             const cells = rows[i];
-                            if (cells.length < 3) continue; // skip empty/short lines
-                            
-                            const teacherName = toCleanString(cells[teacherNameIndex]);
-                            const gradeSection = normalizeClassSectionLabel(cells[gradeIndex]);
-                            const subject = toCleanString(cells[subjectIndex]);
-                            const periodsVal = periodsIndex >= 0 ? toCleanString(cells[periodsIndex]) : '1';
-                            
-                            // Validation
-                            if (!teacherName) {
-                                alert(`Validation Error: Row ${i + 1} has an empty Teacher Name.`);
-                                return;
-                            }
-                            if (!gradeSection) {
-                                alert(`Validation Error: Row ${i + 1} has an empty Grade-Section.`);
-                                return;
-                            }
-                            if (!subject) {
-                                alert(`Validation Error: Row ${i + 1} has an empty Subject.`);
-                                return;
-                            }
-                            
+                            // skip rows that are too short or completely empty
+                            if (!cells || cells.every(c => !c)) continue;
+
+                            const teacherName = toCleanString(cells[teacherNameIndex] || '');
+                            const rawGrade    = toCleanString(cells[gradeIndex]       || '');
+                            const subject     = toCleanString(cells[subjectIndex]     || '');
+                            const periodsVal  = periodsIndex >= 0 ? toCleanString(cells[periodsIndex] || '') : '1';
+                            const teacherId   = teacherIdIndex >= 0 ? toCleanString(cells[teacherIdIndex] || '') : '';
+
+                            const gradeSection = normalizeClassSectionLabel(rawGrade);
+
+                            // Skip rows missing critical fields (log them)
+                            if (!teacherName && !teacherId) { console.warn('Row ' + (i+1) + ': skipped — no teacher name or ID'); skippedRows++; continue; }
+                            if (!gradeSection) { console.warn('Row ' + (i+1) + ': skipped — empty grade-section (raw: "' + rawGrade + '")'); skippedRows++; continue; }
+                            if (!subject) { console.warn('Row ' + (i+1) + ': skipped — empty subject'); skippedRows++; continue; }
+
                             const periods = parseInt(periodsVal) || 1;
-                            if (periods <= 0) {
-                                alert(`Validation Error: Row ${i + 1} has periods per week of "${periodsVal}". It must be greater than 0.`);
-                                return;
-                            }
-                            
+
                             imported.push({
-                                id: `M${Date.now()}-${i}`,
-                                teacherId: '', // Will be generated
-                                teacherName: teacherName,
+                                id: 'M' + Date.now() + '-' + i,
+                                teacherId: teacherId,
+                                teacherName: teacherName || findTeacherNameById(teacherId),
                                 gradeSection: gradeSection,
                                 subject: subject,
                                 periodsPerWeek: String(periods)
                             });
-                            
-                            // Automatically check/create grade-section and subject
+
                             ensureGradeSectionExists(gradeSection);
                             ensureSubjectExists(subject);
+                        }
+
+                        if (skippedRows > 0) {
+                            console.info('Import: skipped ' + skippedRows + ' row(s) due to missing fields. Check console for details.');
                         }
                     }
                     
@@ -3860,6 +3969,16 @@ Return CSV now.`;
                 });
             }
 
+            // Build single-select searchable options
+            const teacherNames = (state.teachers || []).map(function(t) { return t.name; }).filter(Boolean);
+            buildSingleSelectOptions('teacherNameOptions', teacherNames, 'selectTeacherName');
+            // Update display trigger text
+            const selectedVal = nameSelect ? nameSelect.value : '';
+            const disp = document.getElementById('teacherNameDisplay');
+            if (disp) {
+                disp.textContent = selectedVal || 'Select Teacher';
+            }
+
             // Grade-Section custom checkbox list
             const gradeOptions = getClassSectionOptions();
             buildCmsOptions('gradeSectionOptions', gradeOptions.map(function(o) { return o.label; }), "updateCmsDisplay('gradeSectionPanel')");
@@ -3874,7 +3993,7 @@ Return CSV now.`;
             const periodsSelect = document.getElementById('mappingFormPeriods');
             if (periodsSelect) {
                 periodsSelect.innerHTML = '<option value="">Select Periods</option>';
-                for (let i = 1; i <= 12; i++) {
+                for (let i = 1; i <= 10; i++) {
                     periodsSelect.innerHTML += '<option value="' + i + '">' + i + '</option>';
                 }
             }
@@ -3947,6 +4066,11 @@ Return CSV now.`;
             document.getElementById('teacherMappingForm').reset();
             clearAllCms('gradeSectionPanel', 'gradeSectionDisplay', 'gradeSelCount');
             clearAllCms('subjectPanel', 'subjectDisplay', 'subjectSelCount');
+            
+            const teacherNameDisp = document.getElementById('teacherNameDisplay');
+            if (teacherNameDisp) {
+                teacherNameDisp.textContent = 'Select Teacher';
+            }
 
             alert('Mapping saved! Added ' + addedCount + ', updated ' + updatedCount + ' record(s).');
         }

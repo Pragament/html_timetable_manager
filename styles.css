@@ -1034,3 +1034,55 @@
 
 .cms-item.hidden { display: none; }
 
+
+/* ============================
+   Mapping Form – Larger Fields
+   ============================ */
+#mappingFormTeacherName {
+    height: 52px;
+    font-size: 1.05rem;
+    font-weight: 500;
+    padding: 10px 14px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    appearance: auto;
+    -webkit-appearance: auto;
+}
+#mappingFormTeacherName:focus,
+#mappingFormTeacherName:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(63,81,181,0.15);
+    outline: none;
+}
+
+#mappingFormTeacherId {
+    height: 48px;
+    font-size: 1rem;
+    padding: 10px 14px;
+    background: #f5f7ff;
+    border-radius: 8px;
+    color: #666;
+}
+
+#mappingFormPeriods {
+    height: 48px;
+    font-size: 1rem;
+    padding: 10px 14px;
+    border-radius: 8px;
+}
+
+/* Make the form panel wider on large screens */
+#mapping-form-section .setup-grid {
+    grid-template-columns: minmax(360px, 480px) 1fr;
+}
+
+/* Larger CMS trigger for the multiselect boxes */
+#mapping-form-section .cms-trigger {
+    min-height: 52px;
+    font-size: 1rem;
+    padding: 12px 14px;
+}
+
