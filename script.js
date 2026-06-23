@@ -586,6 +586,7 @@
                 <tbody>
                     ${rows.map((mapping, index) => {
                         const gradeValue = mapping.gradeSection ? escapeHtml(mapping.gradeSection) : '';
+                        const gradeValues = mapping.gradeSection ? mapping.gradeSection.split(',') : [];
                         const subjectValue = mapping.subject ? escapeHtml(mapping.subject) : '';
                         
                         // Dynamically ensure the current value is part of the dropdown options
@@ -598,13 +599,12 @@
                         
                         return `
                         <tr data-index="${index}">
-                            <td><input value="${escapeHtml(mapping.teacherId)}" data-field="teacherId"></td>
+                            <td><select data-field="teacherId"><option value=""></option>${(state.teachers || []).map(t => `<option value="${escapeHtml(t.id)}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml(t.id)} - ${escapeHtml(t.name)}</option>`).join('')}</select></td>
                             <td><input value="${escapeHtml(mapping.teacherName)}" data-field="teacherName"></td>
                             <td>
-                                <select data-field="gradeSection">
-                                    <option value=""></option>
+                                <select data-field="gradeSection" multiple>
                                     ${classOptions.map(option => `
-                                        <option value="${escapeHtml(option.label)}"${option.label === gradeValue ? ' selected' : ''}>${escapeHtml(option.label)}</option>
+                                        <option value="${escapeHtml(option.label)}"${gradeValues.includes(option.label) ? ' selected' : ''}>${escapeHtml(option.label)}</option>
                                     `).join('')}
                                 </select>
                             </td>
