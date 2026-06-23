@@ -66,9 +66,7 @@
             if (storedHolidays) {
                 state.holidays = JSON.parse(storedHolidays);
             } else {
-                // Use sample holidays if none stored
-                state.holidays = sampleHolidays;
-                saveHolidaysToStorage();
+                state.holidays = [];
             }
             
             if (storedPeriodTimes) {
@@ -3693,24 +3691,31 @@ Return CSV now.`;
             const normalized = normalizeClassSectionLabel(label);
             if (!normalized) return;
             
+            const match = normalized.match(/^([0-9]+|[IVXLCDMivxlcdm]+)?([A-Za-z]+)?$/);
+            let cls = '';
+            let sec = '';
+            if (match) {
+                cls = match[1] || normalized;
+                sec = match[2] || '';
+            } else {
+                cls = normalized;
+                sec = '';
+            }
+            
+            if (/^[0-9]+$/.test(cls)) {
+                cls = romanize(parseInt(cls, 10));
+            } else {
+                cls = cls.toUpperCase();
+            }
+            sec = sec.toUpperCase();
+
             state.classSections = state.classSections || [];
             const exists = state.classSections.some(item => 
-                toCleanString(item.className).toLowerCase() === `class-${normalized}`.toLowerCase() ||
-                (item.class + item.section).toLowerCase() === normalized.toLowerCase()
+                toCleanString(item.class).toLowerCase() === cls.toLowerCase() &&
+                toCleanString(item.section).toLowerCase() === sec.toLowerCase()
             );
             
             if (!exists) {
-                const match = normalized.match(/^([0-9]+|[IVXLCDMivxlcdm]+)?([A-Za-z]+)?$/);
-                let cls = '';
-                let sec = '';
-                if (match) {
-                    cls = match[1] || normalized;
-                    sec = match[2] || '';
-                } else {
-                    cls = normalized;
-                    sec = '';
-                }
-                
                 state.classSections.push({
                     className: `Class-${cls}-${sec}`,
                     class: cls,
