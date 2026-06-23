@@ -1576,44 +1576,7 @@ Return CSV now.`;
         }
         
         function normalizeClassSectionLabel(value) {
-            const cleaned = toCleanString(value);
-            if (!cleaned) return '';
-
-            const upper = cleaned.toUpperCase().replace(/\s+/g, ' ').trim();
-
-            // Already in canonical form: Grade-5-A or Grade-IX-B
-            const canonical = upper.match(/^GRADE-([\w]+)-([A-Z])$/i);
-            if (canonical) {
-                return 'Grade-' + canonical[1] + '-' + canonical[2].toUpperCase();
-            }
-
-            // "Grade 5 A" or "Grade IX A"
-            const spaced = upper.match(/^GRADE\s+([\w]+)\s+([A-Z])$/);
-            if (spaced) {
-                return 'Grade-' + spaced[1] + '-' + spaced[2];
-            }
-
-            // "5-A" or "IX-B" (no Grade prefix)
-            const hyphen = upper.match(/^([\w]+)-([A-Z])$/);
-            if (hyphen) {
-                return 'Grade-' + hyphen[1] + '-' + hyphen[2];
-            }
-
-            // "5A" or "IXB" — split digit/numeral from trailing letter
-            const compact = upper.replace(/\s+/g, '');
-            const compactMatch = compact.match(/^([IVXivxLCDMlcdm\d]+)([A-Z])$/);
-            if (compactMatch) {
-                return 'Grade-' + compactMatch[1].toUpperCase() + '-' + compactMatch[2].toUpperCase();
-            }
-
-            // "5 A" two tokens
-            const parts = upper.split(/\s+/).filter(Boolean);
-            if (parts.length === 2 && /^[\w]+$/.test(parts[0]) && /^[A-Z]$/.test(parts[1])) {
-                return 'Grade-' + parts[0] + '-' + parts[1];
-            }
-
-            // fallback — return as-is cleaned
-            return cleaned;
+            return toCleanString(value);
         }
         
         function getStandardDayOrder() {
@@ -3703,39 +3666,7 @@ Return CSV now.`;
         }
 
         function normalizeShortClassLabel(label) {
-            let clean = toCleanString(label).toUpperCase().replace(/\s+/g, '');
-            if (!clean) return '';
-            
-            if (clean.startsWith('GRADE-')) {
-                return normalizeClassSectionLabel(clean);
-            }
-            
-            const match = clean.match(/^(\d+)([A-Z])$/);
-            if (match) {
-                const classNum = parseInt(match[1]);
-                const section = match[2];
-                const roman = romanize(classNum);
-                return `Grade-${roman}-${section}`;
-            }
-            
-            const romanMatch = clean.match(/^([IVXLC]+)([A-Z])$/);
-            if (romanMatch) {
-                return `Grade-${romanMatch[1]}-${romanMatch[2]}`;
-            }
-            
-            // Handle raw single numbers or roman numerals by assuming section A
-            const singleNumMatch = clean.match(/^(\d+)$/);
-            if (singleNumMatch) {
-                const roman = romanize(parseInt(singleNumMatch[1]));
-                return `Grade-${roman}-A`;
-            }
-            
-            const singleRomanMatch = clean.match(/^([IVXLC]+)$/);
-            if (singleRomanMatch) {
-                return `Grade-${singleRomanMatch[1]}-A`;
-            }
-            
-            return normalizeClassSectionLabel(label);
+            return toCleanString(label);
         }
 
         function handleImportFormMappingsCSV(event) {
