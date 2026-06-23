@@ -375,6 +375,9 @@
             renderMappingFormDropdowns();
             renderFormMappingTable();
             
+            // Sync all filter dropdowns
+            updateClassFilters();
+            
             // If timetable data exists, show it
             if (state.timetableData) {
                 const updatedPeriods = autoFillMissingSubjectsFromTeacherMap();
@@ -2304,20 +2307,36 @@ Return CSV now.`;
         
         function getUniqueSubjectMap() {
             const subjectMap = new Map();
-            if (!state.timetableData) return subjectMap;
             
-            Object.keys(state.timetableData).forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        const label = toCleanString(period.subject);
-                        const key = normalizeSubjectName(label);
-                        if (key && !subjectMap.has(key)) {
-                            subjectMap.set(key, label);
-                        }
-                    });
-                });
+            // Add from state.subjects Setup data
+            (state.subjects || []).forEach(subj => {
+                const label = typeof subj === 'string' ? subj : (subj.name || subj.code || '');
+                const cleanLabel = toCleanString(label);
+                const key = normalizeSubjectName(cleanLabel);
+                if (key && !subjectMap.has(key)) {
+                    subjectMap.set(key, cleanLabel);
+                }
             });
+
+            // Add from timetableData
+            if (state.timetableData) {
+                Object.keys(state.timetableData).forEach(className => {
+                    const classData = state.timetableData[className];
+                    if (classData && classData.days) {
+                        classData.days.forEach(day => {
+                            if (day && day.periods) {
+                                day.periods.forEach(period => {
+                                    const label = toCleanString(period.subject);
+                                    const key = normalizeSubjectName(label);
+                                    if (key && !subjectMap.has(key)) {
+                                        subjectMap.set(key, label);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            }
             
             return subjectMap;
         }
@@ -2370,8 +2389,6 @@ Return CSV now.`;
         
         // Update class filters
         function updateClassFilters() {
-            if (!state.timetableData) return;
-            
             // Combine classes from loaded timetable data and generated classSections
             const classSet = new Set();
             if (state.timetableData) Object.keys(state.timetableData).forEach(c => classSet.add(c));
@@ -2402,15 +2419,24 @@ Return CSV now.`;
             
             // Update teacher filter
             const teachers = new Set();
-            classes.forEach(className => {
-                const classData = state.timetableData[className];
-                classData.days.forEach(day => {
-                    day.periods.forEach(period => {
-                        const teacherLabel = toCleanString(period.teacherName);
-                        if (teacherLabel) teachers.add(teacherLabel);
-                    });
-                });
+            (state.teachers || []).forEach(t => {
+                if (t && t.name) teachers.add(t.name);
             });
+            if (state.timetableData) {
+                classes.forEach(className => {
+                    const classData = state.timetableData[className];
+                    if (classData && classData.days) {
+                        classData.days.forEach(day => {
+                            if (day && day.periods) {
+                                day.periods.forEach(period => {
+                                    const teacherLabel = toCleanString(period.teacherName);
+                                    if (teacherLabel) teachers.add(teacherLabel);
+                                });
+                            }
+                        });
+                    }
+                });
+            }
             const sortedTeachers = Array.from(teachers)
                 .sort((a, b) => safeLocaleCompare(a, b));
             
