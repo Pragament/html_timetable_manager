@@ -228,9 +228,49 @@
             if (exportBtn) exportBtn.addEventListener('click', exportTeacherList);
             document.getElementById('teacherMappingFileInput').addEventListener('change', handleTeacherMappingUpload);
             document.getElementById('addTeacherRowBtn').addEventListener('click', addTeacherRow);
+            const clearTeachersBtn = document.getElementById('clearTeachersBtn');
+            if (clearTeachersBtn) clearTeachersBtn.addEventListener('click', clearTeachers);
             document.getElementById('addMappingRowBtn').addEventListener('click', addMappingRow);
+            const clearTeacherMappingsBtn = document.getElementById('clearTeacherMappingsBtn');
+            if (clearTeacherMappingsBtn) clearTeacherMappingsBtn.addEventListener('click', clearTeacherMappings);
             const exportMappingBtn = document.getElementById('exportMappingBtn');
             if (exportMappingBtn) exportMappingBtn.addEventListener('click', exportTeacherMappingCSV);
+            
+            const teacherMappingSearch = document.getElementById('teacherMappingSearch');
+            if (teacherMappingSearch) {
+                teacherMappingSearch.addEventListener('input', function(e) {
+                    const query = e.target.value.toLowerCase().trim();
+                    const searchTerms = query.split(/\s+/).filter(Boolean);
+                    const rows = document.querySelectorAll('#teacherMappingTable tbody tr');
+                    rows.forEach(row => {
+                        const teacherIdSelect = row.querySelector('[data-field="teacherId"]');
+                        let teacherText = teacherIdSelect && teacherIdSelect.selectedOptions.length > 0 ? teacherIdSelect.selectedOptions[0].text.toLowerCase() : '';
+                        
+                        const gradeSelect = row.querySelector('[data-field="gradeSection"]');
+                        let gradeText = gradeSelect ? Array.from(gradeSelect.selectedOptions).map(o => o.value.toLowerCase()).join(' ') : '';
+                        
+                        const subjectSelect = row.querySelector('[data-field="subject"]');
+                        let subjectText = subjectSelect && subjectSelect.selectedOptions.length > 0 ? subjectSelect.selectedOptions[0].value.toLowerCase() : '';
+                        
+                        const rowText = `${teacherText} ${gradeText} ${subjectText}`;
+                        
+                        if (searchTerms.length === 0 || searchTerms.every(term => rowText.includes(term))) {
+                            row.style.display = '';
+                        } else {
+                            row.style.display = 'none';
+                        }
+                    });
+                });
+            }
+            
+            window.filterTeacherMapping = function(gradeSection, subject) {
+                const searchInput = document.getElementById('teacherMappingSearch');
+                if (searchInput) {
+                    searchInput.value = `${gradeSection} ${subject}`;
+                    searchInput.dispatchEvent(new Event('input'));
+                    searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            };
             const genClassesBtn = document.getElementById('generateClassSectionsBtn');
             if (genClassesBtn) genClassesBtn.addEventListener('click', generateClassSectionsFromInput);
             const clearClassesBtn = document.getElementById('clearClassSectionsBtn');
@@ -604,11 +644,24 @@
                     `}).join('')}
                 </tbody>
             `;
+            
+            const searchInput = document.getElementById('teacherMappingSearch');
+            if (searchInput && searchInput.value) {
+                searchInput.dispatchEvent(new Event('input'));
+            }
         }
 
         function renderTeacherMappingTable() {
             const table = document.getElementById('teacherMappingTable');
             const rows = state.teacherMappings || [];
+            
+            // Sort rows alphabetically by teacher ID, then by grade-section
+            rows.sort((a, b) => {
+                const tComp = safeLocaleCompare(a.teacherId, b.teacherId);
+                if (tComp !== 0) return tComp;
+                return compareGradeSection(a.gradeSection, b.gradeSection);
+            });
+            
             const classOptions = getClassSectionOptions();
             const baseSubjectOptions = getSubjectOptions(); // array of { code, name }
             const periodOptions = getPeriodOptions();
@@ -619,7 +672,7 @@
                 <tbody>
                     ${rows.map((mapping, index) => {
                         const gradeValue = mapping.gradeSection ? escapeHtml(mapping.gradeSection) : '';
-                        const gradeValues = mapping.gradeSection ? mapping.gradeSection.split(',') : [];
+                        const gradeValues = mapping.gradeSection ? mapping.gradeSection.split(/[,;]/).map(s => s.trim()) : [];
                         const subjectValue = mapping.subject ? escapeHtml(mapping.subject) : '';
                         const fixedPeriodsValue = mapping.fixedPeriods ? escapeHtml(mapping.fixedPeriods) : '';
                         const fixedPeriodsValues = mapping.fixedPeriods ? mapping.fixedPeriods.split(',') : [];
@@ -663,6 +716,75 @@
                     `}).join('')}
                 </tbody>
             `;
+            
+            renderMappingStatsTable();
+        }
+
+        function renderMappingStatsTable() {
+            const tableBody = document.querySelector('#mappingStatsTable tbody');
+            if (!tableBody) return;
+            
+            const rows = state.teacherMappings || [];
+            const stats = {};
+            
+            rows.forEach(mapping => {
+                if (!mapping.gradeSection) return;
+                
+                const sections = mapping.gradeSection.split(/[,;]/);
+                const periods = parseInt(mapping.periodsPerWeek) || 0;
+                
+                sections.forEach(sec => {
+                    let cleanSec = sec.trim();
+                    if (!cleanSec) return;
+                    
+                    cleanSec = normalizeClassSectionLabel(cleanSec.replace('|', '-'));
+                    
+                    if (!stats[cleanSec]) {
+                        stats[cleanSec] = { total: 0, subjects: {} };
+                    }
+                    stats[cleanSec].total += periods;
+                    
+                    const subject = mapping.subject || 'Unknown';
+                    if (!stats[cleanSec].subjects[subject]) {
+                        stats[cleanSec].subjects[subject] = 0;
+                    }
+                    stats[cleanSec].subjects[subject] += periods;
+                });
+            });
+            
+            const sortedSections = Object.keys(stats).sort(compareGradeSection);
+            
+            tableBody.innerHTML = sortedSections.map((sec, i) => {
+                const data = stats[sec];
+                const subjectDetails = Object.entries(data.subjects)
+                    .sort((a, b) => safeLocaleCompare(a[0], b[0]))
+                    .map(([sub, p]) => `
+                        <div style="background: white; padding: 5px 10px; border-radius: 4px; border: 1px solid #e2e8f0; cursor: pointer; transition: background 0.2s;" 
+                             onmouseover="this.style.background='#e2e8f0'" 
+                             onmouseout="this.style.background='white'"
+                             onclick="window.filterTeacherMapping('${escapeHtml(sec)}', '${escapeHtml(sub)}'); event.stopPropagation();">
+                            ${escapeHtml(sub)}: <strong>${p}</strong>
+                        </div>
+                    `)
+                    .join('');
+                
+                return `
+                    <tr style="cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='transparent'" onclick="document.getElementById('stats-detail-${i}').style.display = document.getElementById('stats-detail-${i}').style.display === 'none' ? 'table-row' : 'none'">
+                        <td>
+                            <i class="fas fa-chevron-down" style="font-size: 0.8em; margin-right: 8px; color: #64748b;"></i>
+                            <strong>${escapeHtml(sec)}</strong>
+                        </td>
+                        <td><strong>${data.total}</strong></td>
+                    </tr>
+                    <tr id="stats-detail-${i}" style="display: none; background: #f8fafc;">
+                        <td colspan="2" style="padding: 15px;">
+                            <div style="font-size: 0.9em; color: #334155; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;">
+                                ${subjectDetails}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function getPeriodOptions() {
@@ -691,7 +813,7 @@
                 const value = `${classValue}|${sectionValue}`;
                 return { label, value };
             });
-            return options.sort((a, b) => safeLocaleCompare(a.label, b.label));
+            return options.sort((a, b) => compareGradeSection(a.label, b.label));
         }
 
         function syncTeacherGradeSection(select) {
@@ -925,7 +1047,7 @@
                 // p is {className, class, section}
                 if (p && p.className) mergedMap.set(p.className, p);
             });
-            state.classSections = Array.from(mergedMap.values()).sort((a,b)=>safeLocaleCompare(a.className, b.className));
+            state.classSections = Array.from(mergedMap.values()).sort((a,b)=>compareGradeSection(a.className, b.className));
             saveMasterDataToStorage();
             renderClassSectionsTable();
             updateClassFilters();
@@ -1160,6 +1282,20 @@
             URL.revokeObjectURL(url);
         }
 
+        function clearTeachers() {
+            if (!confirm('Clear all teacher entries?')) return;
+            state.teachers = [];
+            saveMasterDataToStorage();
+            renderTeacherMasterTable();
+        }
+
+        function clearTeacherMappings() {
+            if (!confirm('Clear all teacher mapping entries?')) return;
+            state.teacherMappings = [];
+            saveMasterDataToStorage();
+            renderTeacherMappingTable();
+        }
+
         function clearClassSections() {
             if (!confirm('Clear all generated class-section entries?')) return;
             state.classSections = [];
@@ -1222,7 +1358,7 @@
                     const mergedMap = new Map();
                     existing.forEach(e => { if (e && e.className) mergedMap.set(e.className, e); });
                     parsed.forEach(p => { if (p && p.className) mergedMap.set(p.className, p); });
-                    state.classSections = Array.from(mergedMap.values()).sort((a,b)=>safeLocaleCompare(a.className, b.className));
+                    state.classSections = Array.from(mergedMap.values()).sort((a,b)=>compareGradeSection(a.className, b.className));
                     saveMasterDataToStorage();
                     renderClassSectionsTable();
                     updateClassFilters();
@@ -1298,7 +1434,7 @@
             );
 
             const detailedData = state.config.aiPromptStyle === 'detailed'
-                ? `\nTeacher CSV:\n${toTeacherCSV(teachers)}\n\nMapping CSV:\n${toMappingCSV(mappings)}\n`
+                ? `\nMapping CSV:\n${toMappingCSV(mappings)}\n`
                 : `\nMappings:\n${compactMappings.join('\n') || 'No mappings imported yet.'}\n`;
 
             return `You are generating a school timetable from local principal-provided data.
@@ -1687,6 +1823,32 @@ Return CSV now.`;
         function safeLocaleCompare(a, b) {
             return String(a ?? '').localeCompare(String(b ?? ''), undefined, { sensitivity: 'base' });
         }
+
+        function compareGradeSection(a, b) {
+            const parseGrade = (str) => {
+                const sStr = String(str || '').trim();
+                const match = sStr.match(/Grade-([IVX\d]+)-([A-Z0-9]+)/i) || sStr.match(/([IVX\d]+)-([A-Z0-9]+)/i) || sStr.match(/^([IVX\d]+)$/i) || sStr.match(/^Grade-([IVX\d]+)$/i);
+                
+                if (!match) return { num: 999, section: sStr };
+                
+                const g = match[1].toUpperCase();
+                const s = match[2] ? match[2].toUpperCase() : '';
+                let num = parseInt(g, 10);
+                if (isNaN(num)) {
+                    const romanToNum = { 'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9, 'X': 10, 'XI': 11, 'XII': 12 };
+                    num = romanToNum[g] || 999;
+                }
+                return { num, section: s };
+            };
+
+            const parsedA = parseGrade(a);
+            const parsedB = parseGrade(b);
+
+            if (parsedA.num !== parsedB.num) {
+                return parsedA.num - parsedB.num;
+            }
+            return safeLocaleCompare(parsedA.section, parsedB.section);
+        }
         
         const duplicateCheckCache = new Set();
 
@@ -1812,6 +1974,15 @@ Return CSV now.`;
             const cleaned = toCleanString(value);
             if (!cleaned) return '';
 
+            if (cleaned.includes(',') || cleaned.includes(';')) {
+                const parts = cleaned.split(/[,;]/).map(p => p.trim()).filter(Boolean);
+                return parts.map(p => normalizeSingleClassSectionLabel(p)).join(',');
+            }
+            
+            return normalizeSingleClassSectionLabel(cleaned);
+        }
+        
+        function normalizeSingleClassSectionLabel(cleaned) {
             const hyphenated = cleaned.replace(/\s*-\s*/g, '-');
             
             // Handle hyphenated format without GRADE prefix (e.g., "I-A", "10-A")
@@ -2025,7 +2196,7 @@ Return CSV now.`;
             parsed.forEach(item => {
                 if (item && item.className) mergedMap.set(item.className, item);
             });
-            state.classSections = Array.from(mergedMap.values()).sort((a, b) => safeLocaleCompare(a.className, b.className));
+            state.classSections = Array.from(mergedMap.values()).sort((a, b) => compareGradeSection(a.className, b.className));
         }
 
         /** Map Grade-10-A / 10-A labels to Class-10-A keys used by state.timetableData. */
@@ -3753,7 +3924,7 @@ Return CSV now.`;
                 if (!c) return;
                 classSet.add(c.className || (typeof c === 'string' ? c : `${c.class || ''}-${c.section || ''}`));
             });
-            const classes = Array.from(classSet).sort((a, b) => safeLocaleCompare(a, b));
+            const classes = Array.from(classSet).sort((a, b) => compareGradeSection(a, b));
             
             // Update class filter in View Timetable
             const classFilter = document.getElementById('classFilter');

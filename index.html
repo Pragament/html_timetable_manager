@@ -98,6 +98,9 @@
                         <button class="btn btn-secondary" id="addTeacherRowBtn">
                             <i class="fas fa-plus"></i> Add Teacher
                         </button>
+                        <button class="btn btn-secondary" id="clearTeachersBtn">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
                     </div>
                     <div class="editable-table-wrap">
                         <table class="editable-table" id="teacherMasterTable"></table>
@@ -118,6 +121,22 @@
                         <button class="btn btn-secondary" id="addMappingRowBtn">
                             <i class="fas fa-plus"></i> Add Mapping
                         </button>
+                        <button class="btn btn-secondary" id="clearTeacherMappingsBtn">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                    </div>
+                    <h4 style="margin-top: 20px;">Mapping Statistics</h4>
+                    <div class="editable-table-wrap" style="max-height: 300px; margin-bottom: 20px;">
+                        <table class="editable-table" id="mappingStatsTable">
+                            <thead>
+                                <tr><th>Grade-Section</th><th>Total Periods Per Week</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div style="margin-bottom: 10px; display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-search" style="color: #64748b;"></i>
+                        <input type="text" id="teacherMappingSearch" class="form-control" placeholder="Search by Teacher ID or Name..." style="flex: 1;">
                     </div>
                     <div class="editable-table-wrap">
                         <table class="editable-table" id="teacherMappingTable"></table>
