@@ -4,36 +4,49 @@ A purely client-side browser application for Principals and Administrators to de
 
 ## Workflow for the Principal
 
-The application stores all imported setup data securely in your browser's `localStorage`. To generate a timetable from scratch, follow these exact steps:
+The application stores all imported setup data securely in your browser's `localStorage`. To set up and generate a timetable from scratch, the Principal or Administrator should follow these exact steps and import the respective files in order:
 
 ### 1. Setup the Foundation (Master Data)
-Go to the **Setup** section to define the core structural data of the school:
-*   **Bulk Classes & Sections:** Import your `class-sections.csv` to establish the grades and sections in your school (e.g., Grade-I-A, Grade-I-B). You can also type them in manually.
-*   **Bulk Subjects:** Import your `subjects-code.csv` to establish all available subjects.
-*   **Teacher List:** Import your `teacher-list.csv` to register all faculty members with their basic contact details and class teacher assignments.
+Navigate to the **Setup** section in the sidebar to define the core structural data of the school. You will need to import the following three files:
+*   **Step 1.1: Bulk Classes & Sections**
+    *   **File to Import:** `class-sections.csv`
+    *   **Action:** Upload your CSV to establish the grades and sections in your school (e.g., Grade-I-A, Grade-I-B). You can also add them manually.
+*   **Step 1.2: Bulk Subjects**
+    *   **File to Import:** `subjects-code.csv`
+    *   **Action:** Upload your CSV to establish all available subjects and their codes.
+*   **Step 1.3: Teacher List**
+    *   **File to Import:** `teacher-list.csv`
+    *   **Action:** Upload your CSV to register all faculty members with their basic contact details and class teacher assignments.
 
 ### 2. Configure the Timetable Parameters
-In the **Timetable Configuration** panel, set your scheduling constraints:
-*   **School Days:** Set the operating days (e.g., Monday,Tuesday,Wednesday,Thursday,Friday,Saturday).
+In the **Timetable Configuration** panel under Setup, set your scheduling constraints:
+*   **School Days:** Select the operating days (e.g., Monday to Saturday).
 *   **Periods per Day:** Set how many periods are in a standard day.
 *   **Max Periods Per Teacher:** Determine the maximum workload any individual teacher can be assigned per week.
 
-### 3. Import Teacher-Subject Mappings
-Upload your `teacher-mapping.csv` in the **Teacher Grade-Section Subject Mapping** panel. This is the most crucial step. It tells the system:
-*   Which Teacher teaches which Subject to which Grade-Section.
-*   **Periods Per Week:** How many periods this mapping requires.
-*   **Fixed Periods:** Specific locked periods (e.g., `1` for P1, `5,6` for P5 and P6).
-*   **Mode:** Whether the class is Individual (`0`) or Combined (`1`) (where multiple classes share the same teacher simultaneously).
+### 3. Define Lab Blocks (Optional)
+If your school has continuous practical/lab sessions that span multiple periods:
+*   **File to Import:** `lab-blocks.csv`
+*   **Action:** Go to the **Lab Blocks** panel in the Setup section and upload the CSV to define which subjects require block periods and how long they should be.
 
-### 4. Save and Generate
-*   Once all data is imported and looks correct in the UI tables, click **Save Changes** at the top.
+### 4. Import Teacher-Subject Mappings (Crucial Step)
+Go to the **Teacher Grade-Section Subject Mapping** panel. This step tells the system who teaches what, where, and how often.
+*   **File to Import:** `teacher-mapping.csv` (or `teacher-mapping-combined.csv` for shared classes)
+*   **Action:** Upload the CSV mapping file. This file contains:
+    *   Which Teacher teaches which Subject to which Grade-Section.
+    *   **Periods Per Week:** How many periods this mapping requires.
+    *   **Fixed Periods:** Specific locked periods (e.g., `1` for P1, `5,6` for P5 and P6).
+    *   **Mode:** Whether the class is Individual (`0`) or Combined (`1`) (where multiple classes share the same teacher simultaneously).
+
+### 5. Save and Generate
+*   Once all data is imported from the CSV files and looks correct in the UI tables, click **Save Changes** at the top right.
 *   Click **Generate Timetable**. The built-in scheduling engine will automatically construct a complete, conflict-free timetable honoring your mappings, fixed periods, lab blocks, and combined classes.
 
-### 5. Review and Refine
+### 6. Review and Refine
 Navigate to the **View** section to visually inspect the results:
 *   **Teacher View:** Ensure no teacher is double-booked and verify their workloads.
-*   **Class View:** Ensure all periods are filled correctly.
-*   **Subject View:** Track subject distributions.
+*   **Class View:** Ensure all periods are filled correctly for every class.
+*   **Subject View:** Track subject distributions across the week.
 
 *(Optional Alternative)*: If you prefer to generate the timetable externally, you can use the **AI Prompt** tab to copy a prompt to feed into an LLM (like ChatGPT or Claude), and then use **Upload Timetable** to import the generated CSV.
 
