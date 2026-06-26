@@ -239,8 +239,18 @@ function setupEventListeners() {
     const teacherMappingSearch = document.getElementById( 'teacherMappingSearch' );
     if ( teacherMappingSearch ) {
         teacherMappingSearch.addEventListener( 'input', function ( e ) {
-            const query = e.target.value.toLowerCase().trim();
-            const searchTerms = query.split( /\s+/ ).filter( Boolean );
+            const query = e.target.value.trim();
+            const searchTerms = query.toLowerCase().split( /\s+/ ).filter( Boolean );
+            
+            const exactGrade = e.target.dataset.exactGrade || '';
+            const exactSubject = e.target.dataset.exactSubject || '';
+            const isExactMatch = exactGrade && exactSubject && query === `${exactGrade} ${exactSubject}`;
+            
+            if ( !isExactMatch ) {
+                e.target.dataset.exactGrade = '';
+                e.target.dataset.exactSubject = '';
+            }
+
             const rows = document.querySelectorAll( '#teacherMappingTable tbody tr' );
             rows.forEach( row => {
                 const teacherIdSelect = row.querySelector( '[data-field="teacherId"]' );
@@ -248,16 +258,25 @@ function setupEventListeners() {
 
                 const gradeSelect = row.querySelector( '[data-field="gradeSection"]' );
                 let gradeText = gradeSelect ? Array.from( gradeSelect.selectedOptions ).map( o => o.value.toLowerCase() ).join( ' ' ) : '';
+                let rawGradeText = gradeSelect ? Array.from( gradeSelect.selectedOptions ).map( o => o.value ).join( ' ' ) : '';
 
                 const subjectSelect = row.querySelector( '[data-field="subject"]' );
                 let subjectText = subjectSelect && subjectSelect.selectedOptions.length > 0 ? subjectSelect.selectedOptions[0].value.toLowerCase() : '';
+                let rawSubjectText = subjectSelect && subjectSelect.selectedOptions.length > 0 ? subjectSelect.selectedOptions[0].value : '';
 
-                const rowText = `${teacherText} ${gradeText} ${subjectText}`;
-
-                if ( searchTerms.length === 0 || searchTerms.every( term => rowText.includes( term ) ) ) {
-                    row.style.display = '';
+                if ( isExactMatch ) {
+                    if ( rawGradeText.includes( exactGrade ) && rawSubjectText === exactSubject ) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
                 } else {
-                    row.style.display = 'none';
+                    const rowText = `${teacherText} ${gradeText} ${subjectText}`;
+                    if ( searchTerms.length === 0 || searchTerms.every( term => rowText.includes( term ) ) ) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
                 }
             } );
         } );
@@ -266,6 +285,8 @@ function setupEventListeners() {
     window.filterTeacherMapping = function ( gradeSection, subject ) {
         const searchInput = document.getElementById( 'teacherMappingSearch' );
         if ( searchInput ) {
+            searchInput.dataset.exactGrade = gradeSection;
+            searchInput.dataset.exactSubject = subject;
             searchInput.value = `${gradeSection} ${subject}`;
             searchInput.dispatchEvent( new Event( 'input' ) );
             searchInput.scrollIntoView( { behavior: 'smooth', block: 'center' } );
@@ -785,6 +806,16 @@ function renderMappingStatsTable() {
 
     const rows = state.teacherMappings || [];
     const stats = {};
+
+    // Initialize with all existing class sections
+    if ( state.classSections ) {
+        state.classSections.forEach( secObj => {
+            if ( secObj && secObj.className ) {
+                const cleanSec = normalizeClassSectionLabel( secObj.className.replace( '|', '-' ) );
+                stats[cleanSec] = { total: 0, subjects: {} };
+            }
+        } );
+    }
 
     rows.forEach( mapping => {
         if ( !mapping.gradeSection ) return;
@@ -2100,8 +2131,8 @@ function normalizeSingleClassSectionLabel( cleaned ) {
         return `Grade-${toRoman( hyphenMatchNoPrefix[1].toUpperCase() )}-${hyphenMatchNoPrefix[2].toUpperCase()}`;
     }
 
-    // Handle hyphenated format with GRADE prefix (e.g., "GRADE-I-A", "Grade-I-A")
-    const hyphenMatch = hyphenated.match( /^GRADE-?([IVX]+|\d+)-([A-Z])$/i );
+    // Handle hyphenated format with GRADE or CLASS prefix (e.g., "GRADE-I-A", "Class-I-A")
+    const hyphenMatch = hyphenated.match( /^(?:GRADE|CLASS)-?([IVX]+|\d+)-([A-Z])$/i );
     if ( hyphenMatch ) {
         return `Grade-${toRoman( hyphenMatch[1].toUpperCase() )}-${hyphenMatch[2].toUpperCase()}`;
     }
@@ -2109,13 +2140,13 @@ function normalizeSingleClassSectionLabel( cleaned ) {
     const raw = cleaned;
 
     const compact = raw.replace( /\s+/g, '' );
-    const match = compact.match( /^(?:GRADE)?([IVX]+|\d+)([A-Z])$/i );
+    const match = compact.match( /^(?:GRADE|CLASS)?([IVX]+|\d+)([A-Z])$/i );
     if ( match ) {
         return `Grade-${toRoman( match[1].toUpperCase() )}-${match[2].toUpperCase()}`;
     }
 
     // Allow standalone numeric/roman grades without section (e.g. "10", "VII")
-    const standaloneGradeMatch = compact.match( /^(?:GRADE)?([IVX]+|\d+)$/i );
+    const standaloneGradeMatch = compact.match( /^(?:GRADE|CLASS)?([IVX]+|\d+)$/i );
     if ( standaloneGradeMatch ) {
         return `Grade-${toRoman( standaloneGradeMatch[1].toUpperCase() )}`;
     }
