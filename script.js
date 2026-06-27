@@ -15,6 +15,8 @@ const state = {
     teacherMappings: [],
     classSections: [],
     subjects: [],
+    editedCells: {},
+    lastEdit: null,
     config: {
         schoolDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
         periodsPerDay: 8,
@@ -300,8 +302,8 @@ function setupEventListeners() {
     if ( exportClassesBtn ) exportClassesBtn.addEventListener( 'click', exportClassSectionsCSV );
     const importClassesInput = document.getElementById( 'importClassSectionsFile' );
     if ( importClassesInput ) importClassesInput.addEventListener( 'change', handleImportClassSectionsCSV );
-    const addSubjectBtn = document.getElementById( 'addSubjectRowBtn' );
-    if ( addSubjectBtn ) addSubjectBtn.addEventListener( 'click', addSubjectRow );
+    const genSubjectsBtn = document.getElementById( 'generateSubjectsBtn' );
+    if ( genSubjectsBtn ) genSubjectsBtn.addEventListener( 'click', generateSubjectsFromInput );
     const clearSubjectsBtn = document.getElementById( 'clearSubjectsBtn' );
     if ( clearSubjectsBtn ) clearSubjectsBtn.addEventListener( 'click', clearSubjects );
     const exportSubjectsBtn = document.getElementById( 'exportSubjectsBtn' );
@@ -310,8 +312,6 @@ function setupEventListeners() {
     if ( importSubjectsInput ) importSubjectsInput.addEventListener( 'change', handleImportSubjectsCSV );
     document.getElementById( 'saveMasterDataBtn' ).addEventListener( 'click', saveMasterDataFromTables );
     document.getElementById( 'downloadDataTemplatesBtn' ).addEventListener( 'click', downloadMasterDataTemplates );
-    const quickAddMappingSubmitBtn = document.getElementById( 'quickAddMappingSubmitBtn' );
-    if ( quickAddMappingSubmitBtn ) quickAddMappingSubmitBtn.addEventListener( 'click', handleQuickAddMappingSubmit );
     createGenerateButton();
     document.getElementById( 'generatePromptBtn' ).addEventListener( 'click', renderAIPrompt );
     document.getElementById( 'copyPromptBtn' ).addEventListener( 'click', copyAIPrompt );
@@ -397,6 +397,14 @@ function setupEventListeners() {
     // Modify timetable
     document.getElementById( 'rescheduleModeBtn' ).addEventListener( 'click', toggleRescheduleMode );
     document.getElementById( 'loadTimetableBtn' ).addEventListener( 'click', loadTimetableForModification );
+    document.getElementById( 'saveAllChangesBtn' ).addEventListener( 'click', saveAllModifiedChanges );
+    document.getElementById( 'cancelAllChangesBtn' ).addEventListener( 'click', cancelAllModifiedChanges );
+    document.getElementById( 'undoEditBtn' ).addEventListener( 'click', undoLastCellEdit );
+
+    // Edit Modal controls
+    document.getElementById( 'closeEditCellModal' ).addEventListener( 'click', closeEditCellModal );
+    document.getElementById( 'cancelEditCellBtn' ).addEventListener( 'click', closeEditCellModal );
+    document.getElementById( 'saveEditCellBtn' ).addEventListener( 'click', saveCellEditFromModal );
 
     // Teacher schedule
     document.getElementById( 'loadTeacherScheduleBtn' ).addEventListener( 'click', loadTeacherSchedule );
@@ -457,7 +465,6 @@ function updateSetupSummary() {
     document.getElementById( 'masterMappingsCount' ).textContent = ( state.teacherMappings || [] ).length;
     document.getElementById( 'configDaysCount' ).textContent = ( state.config.schoolDays || [] ).length;
     document.getElementById( 'configPeriodsCount' ).textContent = state.config.periodsPerDay || 0;
-    updateQuickAddDropdowns();
 }
 
 function escapeHtml( value ) {
@@ -583,9 +590,9 @@ function handleTeacherMappingUpload( event ) {
         const teacherNameIndex = findHeaderIndex( headers, ['teacher name', 'teachername', 'name', 'teacher'] );
         const gradeIndex = findHeaderIndex( headers, ['grade-section', 'class-section', 'class', 'grade section', 'classes'] );
         const subjectIndex = findHeaderIndex( headers, ['subject', 'course', 'class'] );
-        const periodsIndex = findHeaderIndex( headers, ['periods per week', 'periods/week', 'periods', 'classes'] );
-        const fixedPeriodsIndex = findHeaderIndex( headers, ['fixed periods', 'fixedperiods', 'fixed period', 'fixedperiod', 'fixed', 'block the periods', 'block periods', 'block period', 'blockperiods', 'blockperiod', 'block'] );
-        const modeIndex = findHeaderIndex( headers, ['mode', 'teaching mode', 'type'] );
+        const periodsIndex = findHeaderIndex( headers, ['periods per week', 'periodsperweek', 'periods', 'weekly periods'] );
+        const fixedPeriodsIndex = findHeaderIndex( headers, ['fixed periods', 'fixedperiods', 'fixed', 'block the periods', 'block'] );
+        const modeIndex = findHeaderIndex( headers, ['mode', 'teaching mode'] );
         const combinedGroupIndex = findHeaderIndex( headers, ['combined group', 'combinedgroup', 'group id'] );
 
         if ( gradeIndex === -1 || subjectIndex === -1 ) {
@@ -616,7 +623,7 @@ function handleTeacherMappingUpload( event ) {
                     gradeSection: normalizedClasses,
                     subject: toCleanString( cells[subjectIndex] ),
                     periodsPerWeek: periodsIndex >= 0 ? toCleanString( cells[periodsIndex] ) : '',
-                    fixedPeriods: fixedPeriodsIndex >= 0 ? normalizeFixedPeriods( cells[fixedPeriodsIndex] ) : '',
+                    fixedPeriods: fixedPeriodsIndex >= 0 ? toCleanString( cells[fixedPeriodsIndex] ) : '',
                     mode: modeIndex >= 0 ? toCleanString( cells[modeIndex] ) : '',
                     combinedGroupId: combinedGroupIndex >= 0 ? toCleanString( cells[combinedGroupIndex] ) : ''
                 }];
@@ -663,7 +670,6 @@ function mergeTeacherMappings( existing, imported ) {
 }
 
 function findTeacherNameById( teacherId ) {
-    if ( toCleanString( teacherId ).toUpperCase() === 'UNASSIGNED' ) return 'Unassigned';
     const teacher = ( state.teachers || [] ).find( item => toCleanString( item.id ).toLowerCase() === toCleanString( teacherId ).toLowerCase() );
     return teacher ? teacher.name : '';
 }
@@ -763,7 +769,7 @@ function renderTeacherMappingTable() {
 
         return `
                         <tr data-index="${index}">
-                            <td><select data-field="teacherId"><option value=""></option><option value="UNASSIGNED"${mapping.teacherId === 'UNASSIGNED' ? ' selected' : ''}>Unassigned</option>${( state.teachers || [] ).map( t => `<option value="${escapeHtml( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` ).join( '' )}</select></td>
+                            <td><select data-field="teacherId"><option value=""></option>${( state.teachers || [] ).map( t => `<option value="${escapeHtml( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` ).join( '' )}</select></td>
                             <td>
                                 <select data-field="gradeSection" multiple>
                                     ${classOptions.map( option => `
@@ -800,12 +806,6 @@ function renderTeacherMappingTable() {
                     `} ).join( '' )}
                 </tbody>
             `;
-
-    // Apply checkbox dropdowns to all multi-selects in the table
-    const tableSelects = table.querySelectorAll('select[multiple]');
-    tableSelects.forEach(select => {
-        createCheckboxDropdown(select, 'Select...');
-    });
 
     renderMappingStatsTable();
 }
@@ -947,7 +947,7 @@ function readTableRows( tableId, fields ) {
 
             // Handle multi-select dropdowns
             if ( input.multiple && input.tagName === 'SELECT' ) {
-                const selectedOptions = Array.from( input.options || [] ).filter( opt => opt.selected ).map( opt => opt.value );
+                const selectedOptions = Array.from( input.selectedOptions ).map( opt => opt.value );
                 item[field] = selectedOptions.join( ',' );
             } else {
                 item[field] = toCleanString( input.value );
@@ -974,21 +974,12 @@ function saveMasterDataFromTables() {
     const rawTeachers = readTableRows( 'teacherMasterTable', ['id', 'name', 'classTeacherSubject', 'classTeacherGrade', 'classTeacherSection', 'phone', 'email'] );
     const rawMappings = readTableRows( 'teacherMappingTable', ['teacherId', 'gradeSection', 'subject', 'periodsPerWeek', 'fixedPeriods', 'mode'] );
     const rawClassSections = readTableRows( 'classSectionsTable', ['className', 'class', 'section', 'teachingMode', 'combinedGroupId'] );
-    const rawSubjects = readTableRows( 'subjectsTable', ['code', 'name'] );
 
     if ( rawClassSections && rawClassSections.length > 0 ) {
         state.classSections = rawClassSections.map( c => ( {
             ...c,
             className: c.className || `Class-${c.class}-${c.section}`
         } ) ).sort( ( a, b ) => compareGradeSection( a.className, b.className ) );
-    }
-
-    if ( rawSubjects ) {
-        const uniques = new Map();
-        rawSubjects.forEach(s => {
-            if (s.code) uniques.set(toCleanString(s.code), s);
-        });
-        state.subjects = Array.from(uniques.values()).sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
     }
 
     duplicateCheckCache.clear();
@@ -1050,7 +1041,7 @@ function saveMasterDataFromTables() {
                 teacherName: findTeacherNameById( mapping.teacherId ),
                 gradeSection: normalizeClassSectionLabel( mapping.gradeSection ),
                 subject: subjectValidation.normalized,
-                fixedPeriods: normalizeFixedPeriods( mapping.fixedPeriods || '' )
+                fixedPeriods: mapping.fixedPeriods || ''
             };
 
             // Check for duplicates
@@ -1103,15 +1094,6 @@ function saveMasterDataFromTablesWithoutAlert() {
             gradeSection: normalizeClassSectionLabel( mapping.gradeSection )
         } ) )
         .filter( mapping => mapping.gradeSection && mapping.subject && mapping.teacherId );
-
-    const rawSubjects = readTableRows( 'subjectsTable', ['code', 'name'] );
-    if ( rawSubjects ) {
-        const uniques = new Map();
-        rawSubjects.forEach(s => {
-            if (s.code) uniques.set(toCleanString(s.code), s);
-        });
-        state.subjects = Array.from(uniques.values()).sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
-    }
     rebuildTeacherSubjectMapFromMasterData();
     saveMasterDataToStorage();
     saveTeacherSubjectMapToStorage();
@@ -1158,18 +1140,9 @@ function addMappingRow() {
 
 // --- Bulk Classes & Sections functions ---
 function generateClassSectionsFromInput() {
-    const idInput = document.getElementById( 'bulkClassesIdInput' );
-    const detailsInput = document.getElementById( 'bulkClassesDetailsInput' );
-    if ( !idInput || !detailsInput ) return;
-    const idLines = idInput.value.split( /\r?\n/ ).map( l => l.trim() );
-    const detailsLines = detailsInput.value.split( /\r?\n/ ).map( l => l.trim() );
-    const lines = [];
-    const maxLen = Math.max(idLines.length, detailsLines.length);
-    for (let i = 0; i < maxLen; i++) {
-        if (idLines[i]) {
-            lines.push(idLines[i] + ':' + (detailsLines[i] || 'A'));
-        }
-    }
+    const input = document.getElementById( 'bulkClassesInput' );
+    if ( !input ) return;
+    const lines = input.value.split( /\r?\n/ ).map( l => l.trim() ).filter( Boolean );
     const parsed = parseBulkClassesInput( lines );
     // merge parsed (objects) with existing, dedupe by className
     const existing = ( state.classSections || [] ).filter( Boolean );
@@ -1243,8 +1216,8 @@ function renderSubjectsTable() {
                 <tbody>
                     ${rows.map( ( subject, i ) => `
                         <tr data-index="${i}">
-                            <td><input type="text" data-field="code" value="${escapeHtml( subject.code )}" placeholder="e.g. MATH"></td>
-                            <td><input type="text" data-field="name" value="${escapeHtml( subject.name )}" placeholder="e.g. Mathematics"></td>
+                            <td>${escapeHtml( subject.code )}</td>
+                            <td>${escapeHtml( subject.name )}</td>
                             <td><button class="btn btn-danger btn-sm" onclick="deleteSubject(${i})"><i class="fas fa-trash"></i></button></td>
                         </tr>
                     `).join( '' )}
@@ -1252,28 +1225,39 @@ function renderSubjectsTable() {
             `;
 }
 
-function addSubjectRow() {
-    saveMasterDataFromTablesWithoutAlert();
-    if (!state.subjects) state.subjects = [];
-    state.subjects.push({ code: '', name: '' });
-    renderSubjectsTable();
-    updateSetupSummary();
-}
-
-function deleteSubject( index ) {
-    const table = document.getElementById( 'subjectsTable' );
-    if ( !table ) return;
-    const row = table.querySelector(`tr[data-index="${index}"]`);
-    if ( row ) {
-        row.remove();
-    }
-    saveMasterDataFromTablesWithoutAlert();
-    renderSubjectsTable();
-    updateSetupSummary();
-}
-
 function getSubjectOptions() {
     return ( state.subjects || [] ).slice().sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
+}
+
+function generateSubjectsFromInput() {
+    const input = document.getElementById( 'bulkSubjectsInput' );
+    if ( !input ) return;
+    const lines = input.value.split( /\r?\n/ ).map( l => toCleanString( l ) ).filter( Boolean );
+    const uniques = new Map();
+    ( state.subjects || [] ).forEach( s => uniques.set( toCleanString( s.code ), s ) );
+
+    lines.forEach( line => {
+        const parts = line.split( /[,:]/ );
+        let code = toCleanString( parts[0] );
+        let name = parts.length > 1 ? toCleanString( parts.slice( 1 ).join( line.includes( ',' ) ? ',' : ':' ) ) : code;
+
+        // Smart swap: Subject Codes are typically shorter than Names.
+        if ( code.length > name.length && name.length > 0 ) {
+            const tmp = code;
+            code = name;
+            name = tmp;
+        }
+
+        if ( code ) {
+            uniques.set( toCleanString( code ), { code, name } );
+        }
+    } );
+    state.subjects = Array.from( uniques.values() ).sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
+    saveMasterDataToStorage();
+    renderSubjectsTable();
+    renderTeacherMasterTable();
+    renderTeacherMappingTable();
+    alert( 'Generated ' + lines.length + ' subject entries.' );
 }
 
 function clearSubjects() {
@@ -1527,104 +1511,6 @@ function deleteMappingRow( index ) {
     renderTeacherMappingTable();
     updateSetupSummary();
     renderAIPrompt();
-}
-
-function handleQuickAddMappingSubmit() {
-    const className = document.getElementById('quickAddClass').value;
-    const subject = document.getElementById('quickAddSubject').value;
-    const periods = parseInt(document.getElementById('quickAddPeriods').value) || 5;
-    
-    // Read fixed periods (multiple select)
-    const fixedPeriodsSelect = document.getElementById('quickAddFixedPeriods');
-    const fixedPeriods = Array.from(fixedPeriodsSelect.options || []).filter(opt => opt.selected).map(opt => opt.value).join(',');
-    
-    const teacherId = document.getElementById('quickAddTeacher').value;
-
-    if (!className || !subject) {
-        alert("Please select a Class and Subject first. (You might need to add Classes and Subjects in the panels above).");
-        return;
-    }
-
-    saveMasterDataFromTablesWithoutAlert();
-    state.teacherMappings = state.teacherMappings || [];
-    
-    // Check if mapping already exists
-    const exists = state.teacherMappings.some(m => 
-        toCleanString(m.gradeSection) === toCleanString(className) && 
-        toCleanString(m.subject) === toCleanString(subject) &&
-        toCleanString(m.teacherId) === toCleanString(teacherId || "UNASSIGNED")
-    );
-
-    if (exists) {
-        if (!confirm("A similar mapping already exists. Add anyway?")) return;
-    }
-
-    state.teacherMappings.push({
-        id: `M${state.teacherMappings.length + 1}`,
-        teacherId: teacherId || "UNASSIGNED",
-        teacherName: teacherId ? findTeacherNameById(teacherId) : "Unassigned",
-        gradeSection: className,
-        subject: subject,
-        periodsPerWeek: periods,
-        fixedPeriods: fixedPeriods,
-        mode: "0"
-    });
-
-    rebuildTeacherSubjectMapFromMasterData();
-    saveMasterDataToStorage();
-    saveTeacherSubjectMapToStorage();
-    renderTeacherMappingTable();
-    updateSetupSummary();
-    renderAIPrompt();
-}
-
-function updateQuickAddDropdowns() {
-    const classSelect = document.getElementById('quickAddClass');
-    const subjectSelect = document.getElementById('quickAddSubject');
-    const teacherSelect = document.getElementById('quickAddTeacher');
-    const fixedPeriodsSelect = document.getElementById('quickAddFixedPeriods');
-    if (!classSelect || !subjectSelect || !teacherSelect) return;
-
-    const selectedClass = classSelect.value;
-    const selectedSubject = subjectSelect.value;
-    const selectedTeacher = teacherSelect.value;
-    
-    // Preserve selected fixed periods
-    const selectedFixedPeriods = fixedPeriodsSelect ? Array.from(fixedPeriodsSelect.selectedOptions || []).map(opt => opt.value) : [];
-
-    const classOptions = getClassSectionOptions();
-    classSelect.innerHTML = classOptions.map(c => 
-        `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)}</option>`
-    ).join('');
-
-    subjectSelect.innerHTML = (state.subjects || []).map(s => 
-        `<option value="${escapeHtml(s.code)}">${escapeHtml(s.name)} (${escapeHtml(s.code)})</option>`
-    ).join('');
-
-    teacherSelect.innerHTML = '<option value="">Unassigned</option>' + (state.teachers || []).map(t => 
-        `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)} (${escapeHtml(t.id)})</option>`
-    ).join('');
-
-    if (fixedPeriodsSelect) {
-        const periodOptions = getPeriodOptions();
-        fixedPeriodsSelect.innerHTML = periodOptions.map(opt => 
-            `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label)}</option>`
-        ).join('');
-        // Restore selections
-        Array.from(fixedPeriodsSelect.options).forEach(opt => {
-            if (selectedFixedPeriods.includes(opt.value)) opt.selected = true;
-        });
-        
-        // Re-apply checkbox dropdown if it exists, or create it
-        if (fixedPeriodsSelect.nextElementSibling && fixedPeriodsSelect.nextElementSibling.classList.contains('checkbox-dropdown-container')) {
-            fixedPeriodsSelect.nextElementSibling.remove();
-        }
-        createCheckboxDropdown(fixedPeriodsSelect, 'Select Periods');
-    }
-
-    if (selectedClass) classSelect.value = selectedClass;
-    if (selectedSubject) subjectSelect.value = selectedSubject;
-    if (selectedTeacher) teacherSelect.value = selectedTeacher;
 }
 
 function rebuildTeacherSubjectMapFromMasterData() {
@@ -2159,10 +2045,6 @@ function validateTeacherSelection( teacherId, teacherName ) {
 
     if ( !id && !name ) {
         return { valid: false, error: 'Both Teacher ID and Teacher Name are empty' };
-    }
-
-    if ( id.toUpperCase() === 'UNASSIGNED' || name.toLowerCase() === 'unassigned' ) {
-        return { valid: true, teacherId: 'UNASSIGNED', teacherName: 'Unassigned' };
     }
 
     const teachers = state.teachers || [];
@@ -3734,6 +3616,13 @@ function generateTimetable() {
     renderTimetable();
     showTimetableGenerationStatus( classCount, unscheduled );
 
+    // Auto-switch to View Timetable tab so the user sees the report immediately
+    const viewTab = document.querySelector( '.tab[data-target="view-timetable-section"]' );
+    if ( viewTab ) viewTab.click();
+
+    // Render report in the UI
+    renderGenerationReport();
+
     let message = `Timetable generated for ${classCount} class section(s).`;
     if ( unscheduled.length > 0 ) {
         message += `\n\n${unscheduled.length} mapping(s) could not be fully scheduled:`;
@@ -4415,26 +4304,6 @@ function normalizeSubjectName( subject ) {
     return toCleanString( subject ).toLowerCase();
 }
 
-function normalizeFixedPeriods( fp ) {
-    if ( !fp ) return '';
-    return toCleanString( fp ).split( ',' ).map( s => {
-        let trimmed = s.trim().toUpperCase();
-        if ( /^\d+$/.test( trimmed ) ) return `P${trimmed}`;
-        if ( /^\d+-\d+$/.test( trimmed ) ) {
-            const parts = trimmed.split( '-' );
-            return `P${parts[0]}-P${parts[1]}`;
-        }
-        // Also handle "P1 - P2" or "1 - 2"
-        if ( /^[P]?\d+\s*-\s*[P]?\d+$/.test( trimmed ) ) {
-             const parts = trimmed.split('-');
-             const p1 = parts[0].trim().replace(/^P/, '');
-             const p2 = parts[1].trim().replace(/^P/, '');
-             return `P${p1}-P${p2}`;
-        }
-        return trimmed;
-    } ).filter(Boolean).join( ',' );
-}
-
 function escapeHtmlAttribute( value ) {
     return String( value )
         .replace( /&/g, '&amp;' )
@@ -4467,139 +4336,10 @@ function getUniqueSubjectMap() {
 
 function getMultiSelectValues( selectId ) {
     const select = document.getElementById( selectId );
-    if (!select) return [];
     return Array.from( select.selectedOptions )
         .map( option => option.value )
         .filter( value => value && value.trim() !== '' );
 }
-
-function createCheckboxDropdown(selectElement, placeholder = "Select options...") {
-    const select = typeof selectElement === 'string' ? document.getElementById(selectElement) : selectElement;
-    if (!select) return;
-
-    // Hide original select
-    select.style.display = 'none';
-
-    // Remove existing container if it exists
-    if (select.nextElementSibling && select.nextElementSibling.classList.contains('checkbox-dropdown-container')) {
-        select.nextElementSibling.remove();
-    }
-
-    // Create container
-    const container = document.createElement('div');
-    container.className = 'checkbox-dropdown-container';
-    container.style.position = 'relative';
-    container.style.display = 'inline-block';
-    container.style.width = '100%';
-
-    // Create button
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'form-control dropdown-toggle';
-    button.style.width = '100%';
-    button.style.textAlign = 'left';
-    button.style.display = 'flex';
-    button.style.justifyContent = 'space-between';
-    button.style.alignItems = 'center';
-    button.style.whiteSpace = 'nowrap';
-    button.style.overflow = 'hidden';
-    button.style.textOverflow = 'ellipsis';
-    
-    const updateButtonText = () => {
-        const selectedOptions = Array.from(select.options).filter(opt => opt.selected && opt.value);
-        button.querySelector('span').textContent = selectedOptions.length > 0 ? selectedOptions.length + ' selected' : placeholder;
-    };
-
-    button.innerHTML = `<span></span> <i class="fas fa-chevron-down"></i>`;
-    updateButtonText();
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'multiselect-dropdown-content';
-    dropdown.style.display = 'none';
-    dropdown.style.position = 'absolute';
-    dropdown.style.top = '100%';
-    dropdown.style.left = '0';
-    dropdown.style.right = '0';
-    dropdown.style.background = '#fff';
-    dropdown.style.border = '1px solid #ddd';
-    dropdown.style.borderTop = 'none';
-    dropdown.style.maxHeight = '250px';
-    dropdown.style.overflowY = 'auto';
-    dropdown.style.zIndex = '1000';
-    dropdown.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-
-    Array.from(select.options).forEach(opt => {
-        if (!opt.value) return; 
-        const label = document.createElement('label');
-        label.style.display = 'flex';
-        label.style.alignItems = 'center';
-        label.style.padding = '8px 12px';
-        label.style.cursor = 'pointer';
-        label.style.borderBottom = '1px solid #eee';
-        label.style.gap = '8px';
-        label.style.margin = '0';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = opt.value;
-        checkbox.checked = opt.selected;
-        
-        checkbox.addEventListener('change', (e) => {
-            opt.selected = e.target.checked;
-            updateButtonText();
-            select.dispatchEvent(new Event('change'));
-        });
-
-        label.appendChild(checkbox);
-        label.appendChild(document.createTextNode(opt.text));
-        dropdown.appendChild(label);
-        
-        label.addEventListener('mouseenter', () => label.style.background = '#f8fafc');
-        label.addEventListener('mouseleave', () => label.style.background = '#fff');
-    });
-
-    button.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const isOpen = dropdown.style.display === 'block';
-        document.querySelectorAll('.multiselect-dropdown-content').forEach(d => d.style.display = 'none');
-        
-        if (!isOpen) {
-            const rect = button.getBoundingClientRect();
-            dropdown.style.top = (rect.bottom + window.scrollY) + 'px';
-            dropdown.style.left = (rect.left + window.scrollX) + 'px';
-            dropdown.style.width = rect.width + 'px';
-            dropdown.style.display = 'block';
-        }
-    });
-
-    dropdown.addEventListener('click', (e) => {
-        e.stopPropagation();
-    });
-
-    // Remove the old dropdown if it was appended to the body before
-    if (select._checkboxDropdown) {
-        select._checkboxDropdown.remove();
-    }
-    select._checkboxDropdown = dropdown;
-
-    container.appendChild(button);
-    document.body.appendChild(dropdown);
-
-    select.parentNode.insertBefore(container, select.nextSibling);
-}
-
-document.addEventListener('click', () => {
-    document.querySelectorAll('.multiselect-dropdown-content').forEach(d => d.style.display = 'none');
-});
-
-// Close dropdowns when scrolling inside the table wrapper or the window
-window.addEventListener('scroll', (e) => {
-    // Do not close if the scroll event originated from within the dropdown itself
-    if (e.target && e.target.classList && e.target.classList.contains('multiselect-dropdown-content')) {
-        return;
-    }
-    document.querySelectorAll('.multiselect-dropdown-content').forEach(d => d.style.display = 'none');
-}, true); // Use capture phase to catch scrolls on any element
 
 // Update timetable summary
 function updateTimetableSummary() {
@@ -4721,10 +4461,6 @@ function updateClassFilters() {
     if ( selectedSubjects.length === 0 ) {
         subjectFilter.selectedIndex = -1;
     }
-
-    createCheckboxDropdown('classFilter', 'Select Classes');
-    createCheckboxDropdown('teacherFilter', 'Select Teachers');
-    createCheckboxDropdown('subjectFilter', 'Select Subjects');
 }
 
 // Render timetable
@@ -4823,10 +4559,23 @@ function generateTimetableHTML( classData ) {
             const hasSubject = toCleanString( period.subject ) !== '';
             const hasTeacher = toCleanString( period.teacherName ) !== '';
 
-            if ( !hasSubject && !hasTeacher ) {
-                html += `<td class="break-cell">BREAK</td>`;
-            } else if ( isHoliday ) {
+            const cellKey = `${classData.className}|${dayName}|${period.period}`;
+            const isEdited = state.editedCells && state.editedCells[cellKey];
+            const editedClass = isEdited ? 'edited-cell' : '';
+            const editedIndicator = isEdited ? '<div class="edited-indicator">Edited</div>' : '';
+            const editIconHtml = `<div class="cell-edit-icon"><i class="fas fa-edit"></i></div>`;
+
+            if ( isHoliday ) {
                 html += `<td class="holiday-cell">HOLIDAY</td>`;
+            } else if ( !hasSubject && !hasTeacher ) {
+                html += `
+                            <td class="period-cell break-cell ${editedClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
+                                ${editIconHtml}
+                                ${editedIndicator}
+                                <div class="period-subject">BREAK</div>
+                                <div class="period-teacher">No Teacher</div>
+                            </td>
+                        `;
             } else {
                 const overlapClass = period.overlap ? 'overlap' : '';
                 const overlapTooltip = period.overlapInfo || 'Teacher overlap detected.';
@@ -4840,8 +4589,10 @@ function generateTimetableHTML( classData ) {
                     ? `<div class="period-teacher">${period.teacherName}</div>`
                     : '<div class="period-teacher">No Teacher</div>';
                 html += `
-                            <td class="period-cell ${overlapClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
+                            <td class="period-cell ${overlapClass} ${editedClass}" data-class="${classData.className}" data-day="${dayName}" data-period="${period.period}">
+                                ${editIconHtml}
                                 ${overlapWarningHtml}
+                                ${editedIndicator}
                                 ${subjectHtml}
                                 ${teacherHtml}
                             </td>
@@ -5502,6 +5253,9 @@ function toggleRescheduleMode() {
         rescheduleBtn.classList.add( 'btn-danger' );
         rescheduleBtn.classList.remove( 'btn-primary' );
 
+        // Remove click listeners for editing
+        removeEditListeners();
+
         // Add click listeners to timetable cells
         addRescheduleListeners();
     } else {
@@ -5517,6 +5271,9 @@ function toggleRescheduleMode() {
 
         // Remove click listeners
         removeRescheduleListeners();
+
+        // Add click listeners for editing
+        addEditListeners();
     }
 }
 
@@ -5597,7 +5354,10 @@ function loadTimetableForModification() {
     // Add click listeners if in reschedule mode
     if ( state.rescheduleMode ) {
         addRescheduleListeners();
+    } else {
+        addEditListeners();
     }
+    updateModifyActionsState();
 }
 
 // Load teacher schedule
@@ -5733,3 +5493,1194 @@ document.getElementById( 'confirmSwapBtn' ).addEventListener( 'click', openResch
 document.getElementById( 'cancelSwapBtn' ).addEventListener( 'click', function () {
     toggleRescheduleMode();
 } );
+
+// --- Interactive Timetable Editing ---
+
+function addEditListeners() {
+    const container = document.getElementById('modifyTimetableDisplay');
+    if (!container) return;
+    const cellsInModify = container.querySelectorAll( '.period-cell' );
+    cellsInModify.forEach( cell => {
+        cell.removeEventListener( 'click', handlePeriodEditClick );
+        cell.addEventListener( 'click', handlePeriodEditClick );
+    } );
+}
+
+function removeEditListeners() {
+    const container = document.getElementById('modifyTimetableDisplay');
+    if (!container) return;
+    const cellsInModify = container.querySelectorAll( '.period-cell' );
+    cellsInModify.forEach( cell => {
+        cell.removeEventListener( 'click', handlePeriodEditClick );
+    } );
+}
+
+function handlePeriodEditClick( event ) {
+    const cell = event.currentTarget;
+    const className = cell.getAttribute( 'data-class' );
+    const dayName = cell.getAttribute( 'data-day' );
+    const periodNum = parseInt( cell.getAttribute( 'data-period' ) );
+
+    openEditCellModal( className, dayName, periodNum );
+}
+
+function openEditCellModal( className, dayName, periodNum ) {
+    const classData = state.timetableData[className];
+    if ( !classData ) return;
+    const dayData = classData.days.find( d => d.dayName === dayName );
+    if ( !dayData ) return;
+    const periodData = dayData.periods.find( p => p.period === periodNum );
+    if ( !periodData ) return;
+
+    document.getElementById( 'editModalClass' ).textContent = classData.className || className;
+    document.getElementById( 'editModalDay' ).textContent = dayName;
+    document.getElementById( 'editModalPeriod' ).textContent = `Period ${periodNum}`;
+    document.getElementById( 'editModalCurrentSubject' ).textContent = periodData.subject || 'BREAK';
+    document.getElementById( 'editModalCurrentTeacher' ).textContent = periodData.teacherName || 'No Teacher';
+
+    const modal = document.getElementById( 'editCellModal' );
+    modal.dataset.class = className;
+    modal.dataset.day = dayName;
+    modal.dataset.period = periodNum;
+
+    const subjectSelect = document.getElementById( 'editModalSubjectSelect' );
+    subjectSelect.innerHTML = '<option value="">Select Subject (Clear / Break)</option>';
+    
+    const subjects = state.subjects || [];
+    subjects.forEach( sub => {
+        const option = document.createElement( 'option' );
+        option.value = sub.code;
+        option.textContent = `${sub.code} - ${sub.name}`;
+        if ( sub.code === periodData.subject ) {
+            option.selected = true;
+        }
+        subjectSelect.appendChild( option );
+    } );
+
+    subjectSelect.removeEventListener( 'change', handleSubjectChange );
+    subjectSelect.addEventListener( 'change', handleSubjectChange );
+
+    const initialTeacherId = periodData.teacherId || findTeacherIdByName( periodData.teacherName );
+    populateTeacherDropdownForSubject( periodData.subject, initialTeacherId );
+
+    modal.classList.add( 'active' );
+}
+
+function closeEditCellModal() {
+    document.getElementById( 'editCellModal' ).classList.remove( 'active' );
+}
+
+function handleSubjectChange( event ) {
+    const selectedSubject = event.target.value;
+    const modal = document.getElementById( 'editCellModal' );
+    const className = modal.dataset.class;
+    
+    let mappedTeacherId = '';
+    if ( selectedSubject ) {
+        const mapping = ( state.teacherMappings || [] ).find( m =>
+            toCleanString( m.subject ).toLowerCase() === toCleanString( selectedSubject ).toLowerCase() &&
+            m.gradeSection.split( ',' ).map( s => s.trim().toLowerCase() ).includes( className.toLowerCase() )
+        );
+        if ( mapping ) {
+            mappedTeacherId = mapping.teacherId;
+        }
+    }
+
+    populateTeacherDropdownForSubject( selectedSubject, mappedTeacherId );
+}
+
+function populateTeacherDropdownForSubject( subjectCode, selectedTeacherId ) {
+    const teacherSelect = document.getElementById( 'editModalTeacherSelect' );
+    teacherSelect.innerHTML = '<option value="">Select Teacher (None)</option>';
+
+    if ( !subjectCode ) {
+        teacherSelect.disabled = true;
+        return;
+    }
+    
+    teacherSelect.disabled = false;
+
+    const capableTeachers = getCapableTeachersForSubject( subjectCode );
+
+    capableTeachers.forEach( teacher => {
+        const option = document.createElement( 'option' );
+        option.value = teacher.id;
+        option.textContent = `${teacher.id} - ${teacher.name}`;
+        if ( toCleanString( teacher.id ).toLowerCase() === toCleanString( selectedTeacherId ).toLowerCase() ) {
+            option.selected = true;
+        }
+        teacherSelect.appendChild( option );
+    } );
+}
+
+function getCapableTeachersForSubject( subjectName ) {
+    const cleanSubject = toCleanString( subjectName ).toLowerCase();
+    const capableTeacherIds = new Set();
+    const result = [];
+
+    ( state.teacherMappings || [] ).forEach( m => {
+        if ( toCleanString( m.subject ).toLowerCase() === cleanSubject && m.teacherId ) {
+            capableTeacherIds.add( toCleanString( m.teacherId ).toLowerCase() );
+        }
+    } );
+
+    ( state.teachers || [] ).forEach( t => {
+        const subjects = toCleanString( t.classTeacherSubject || t.subjects || '' )
+            .split( /[;/,]/ )
+            .map( s => toCleanString( s ).toLowerCase() )
+            .filter( Boolean );
+        if ( subjects.includes( cleanSubject ) && t.id ) {
+            capableTeacherIds.add( toCleanString( t.id ).toLowerCase() );
+        }
+    } );
+
+    capableTeacherIds.forEach( id => {
+        const teacherObj = ( state.teachers || [] ).find( t => toCleanString( t.id ).toLowerCase() === id );
+        if ( teacherObj ) {
+            result.push( { id: teacherObj.id, name: teacherObj.name } );
+        } else {
+            const mappingObj = ( state.teacherMappings || [] ).find( m => toCleanString( m.teacherId ).toLowerCase() === id );
+            if ( mappingObj ) {
+                result.push( { id: mappingObj.teacherId, name: mappingObj.teacherName || mappingObj.teacherId } );
+            } else {
+                result.push( { id: id.toUpperCase(), name: id.toUpperCase() } );
+            }
+        }
+    } );
+
+    return result.sort( ( a, b ) => safeLocaleCompare( a.name, b.name ) );
+}
+
+function findTeacherIdByName( teacherName ) {
+    const cleanName = toCleanString( teacherName ).toLowerCase();
+    if (!cleanName) return '';
+    const teacher = ( state.teachers || [] ).find( item => toCleanString( item.name ).toLowerCase() === cleanName );
+    if ( teacher ) return teacher.id;
+    
+    const mapping = ( state.teacherMappings || [] ).find( item => toCleanString( item.teacherName ).toLowerCase() === cleanName );
+    if ( mapping ) return mapping.teacherId;
+    
+    return '';
+}
+
+function checkTeacherConflict( teacherId, teacherName, currentClass, dayName, periodNum ) {
+    const cleanId = toCleanString( teacherId ).toLowerCase();
+    const cleanName = toCleanString( teacherName ).toLowerCase();
+    
+    if ( !cleanId && !cleanName ) return null;
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        if ( className === currentClass ) continue;
+
+        const dayData = ( classData.days || [] ).find( d => d.dayName === dayName );
+        if ( !dayData ) continue;
+
+        const periodData = ( dayData.periods || [] ).find( p => p.period === periodNum );
+        if ( !periodData ) continue;
+
+        const pTeacherId = toCleanString( periodData.teacherId ).toLowerCase();
+        const pTeacherName = toCleanString( periodData.teacherName ).toLowerCase();
+
+        const matchesId = cleanId && pTeacherId && ( cleanId === pTeacherId );
+        const matchesName = cleanName && pTeacherName && ( cleanName === pTeacherName );
+
+        if ( matchesId || matchesName ) {
+            return {
+                className: classData.className || className,
+                dayName: dayName,
+                period: periodNum
+            };
+        }
+    }
+    return null;
+}
+
+function saveCellEditFromModal() {
+    const modal = document.getElementById( 'editCellModal' );
+    const className = modal.dataset.class;
+    const dayName = modal.dataset.day;
+    const periodNum = parseInt( modal.dataset.period );
+
+    const selectedSubject = document.getElementById( 'editModalSubjectSelect' ).value;
+    const selectedTeacherId = document.getElementById( 'editModalTeacherSelect' ).value;
+    const selectedTeacherName = selectedTeacherId ? findTeacherNameById( selectedTeacherId ) : '';
+
+    const classData = state.timetableData[className];
+    const dayData = classData.days.find( d => d.dayName === dayName );
+    const periodData = dayData.periods.find( p => p.period === periodNum );
+
+    // Validation conflict check
+    if ( selectedTeacherId ) {
+        const conflict = checkTeacherConflict( selectedTeacherId, selectedTeacherName, className, dayName, periodNum );
+        if ( conflict ) {
+            const proceed = confirm( `This teacher is already assigned to ${conflict.className} on ${conflict.dayName} Period ${conflict.period}.\n\nDo you want to continue anyway?` );
+            if ( !proceed ) {
+                return;
+            }
+        }
+    }
+
+    const cellKey = `${className}|${dayName}|${periodNum}`;
+    const wasPreviouslyEdited = !!(state.editedCells && state.editedCells[cellKey]);
+
+    // Store previous value for one-level Undo
+    state.lastEdit = {
+        className: className,
+        dayName: dayName,
+        periodNum: periodNum,
+        subject: periodData.subject || '',
+        teacherId: periodData.teacherId || '',
+        teacherName: periodData.teacherName || '',
+        wasEdited: wasPreviouslyEdited
+    };
+
+    // Apply temporary save in memory
+    periodData.subject = selectedSubject;
+    periodData.teacherId = selectedTeacherId;
+    periodData.teacherName = selectedTeacherName;
+
+    // Mark as edited
+    if ( !state.editedCells ) {
+        state.editedCells = {};
+    }
+    state.editedCells[cellKey] = true;
+
+    closeEditCellModal();
+    loadTimetableForModification();
+}
+
+function undoLastCellEdit() {
+    if ( !state.lastEdit ) return;
+
+    const { className, dayName, periodNum, subject, teacherId, teacherName, wasEdited } = state.lastEdit;
+
+    const classData = state.timetableData[className];
+    const dayData = classData.days.find( d => d.dayName === dayName );
+    const periodData = dayData.periods.find( p => p.period === periodNum );
+
+    // Revert values
+    periodData.subject = subject;
+    periodData.teacherId = teacherId;
+    periodData.teacherName = teacherName;
+
+    // Revert edit state
+    const cellKey = `${className}|${dayName}|${periodNum}`;
+    if ( !wasEdited ) {
+        delete state.editedCells[cellKey];
+    }
+
+    state.lastEdit = null;
+    loadTimetableForModification();
+}
+
+function saveAllModifiedChanges() {
+    if ( !state.editedCells || Object.keys( state.editedCells ).length === 0 ) {
+        alert( "No changes to save." );
+        return;
+    }
+
+    // Save to localStorage
+    saveTimetableToStorage();
+
+    // Clear highlights
+    state.editedCells = {};
+    state.lastEdit = null;
+
+    loadTimetableForModification();
+
+    // Update View Timetable too if it's currently rendered
+    if ( typeof renderTimetable === 'function' ) {
+        renderTimetable();
+    }
+
+    alert( "All timetable changes saved successfully!" );
+}
+
+function cancelAllModifiedChanges() {
+    const hasEdits = state.editedCells && Object.keys( state.editedCells ).length > 0;
+    if ( hasEdits ) {
+        const confirmCancel = confirm( "Are you sure you want to discard all unsaved edits?" );
+        if ( !confirmCancel ) return;
+    }
+
+    const storedTimetable = localStorage.getItem( 'schoolTimetable' );
+    if ( storedTimetable ) {
+        state.timetableData = normalizeLoadedTimetableData( JSON.parse( storedTimetable ) );
+    }
+
+    state.editedCells = {};
+    state.lastEdit = null;
+
+    loadTimetableForModification();
+}
+
+function updateModifyActionsState() {
+    const hasEdits = state.editedCells && Object.keys( state.editedCells ).length > 0;
+    const saveBtn = document.getElementById( 'saveAllChangesBtn' );
+    const cancelBtn = document.getElementById( 'cancelAllChangesBtn' );
+    const undoBtn = document.getElementById( 'undoEditBtn' );
+
+    if ( saveBtn ) saveBtn.disabled = !hasEdits;
+    if ( cancelBtn ) cancelBtn.disabled = !hasEdits;
+    if ( undoBtn ) undoBtn.disabled = !state.lastEdit;
+}
+
+// --- Caveat Detection Engine ---
+
+function checkTeacherConflicts() {
+    const conflicts = [];
+    if ( !state.timetableData ) return conflicts;
+
+    const teacherSchedule = new Map(); // key: day|period|teacherName/Id -> list of { className, schedulingKey, period }
+    
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        const classMeta = ( state.classSections || [] ).find( c => c.className === className );
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const teacherName = toCleanString( period.teacherName );
+                const teacherId = toCleanString( period.teacherId || findTeacherIdByName( teacherName ) );
+                if ( !teacherName ) return;
+
+                // Resolve combined key to group combined classes
+                const mapping = ( state.teacherMappings || [] ).find( m => 
+                    m.teacherName === period.teacherName &&
+                    m.subject === period.subject &&
+                    ( m.gradeSection === className || ( m.gradeSection && m.gradeSection.includes( className ) ) )
+                );
+                
+                let schedulingKey = className;
+                if ( mapping && mapping.mode === 'combined' && mapping.combinedGroupId ) {
+                    schedulingKey = mapping.combinedGroupId;
+                } else if ( classMeta && classMeta.teachingMode === 'combined' && classMeta.combinedGroupId ) {
+                    schedulingKey = classMeta.combinedGroupId;
+                }
+
+                const key = `${day.dayName}|${period.period}|${teacherName.toLowerCase()}`;
+                if ( !teacherSchedule.has( key ) ) {
+                    teacherSchedule.set( key, [] );
+                }
+                teacherSchedule.get( key ).push( { className, schedulingKey, period } );
+            } );
+        } );
+    }
+
+    for ( const [key, list] of teacherSchedule.entries() ) {
+        if ( list.length <= 1 ) continue;
+        
+        // Check if there are different scheduling keys
+        const distinctKeys = new Set( list.map( item => item.schedulingKey ) );
+        if ( distinctKeys.size <= 1 ) continue;
+
+        // Report conflict for each item in the list
+        list.forEach( item => {
+            const day = key.split( '|' )[0];
+            const periodNum = parseInt( key.split( '|' )[1] );
+            const teacherName = list[0].period.teacherName;
+            const teacherId = list[0].period.teacherId || findTeacherIdByName( teacherName );
+
+            const otherClasses = list
+                .filter( other => other.schedulingKey !== item.schedulingKey )
+                .map( other => other.className );
+
+            conflicts.push( {
+                type: "teacher_conflict",
+                class: item.className,
+                day: day,
+                period: `P${periodNum}`,
+                teacherId: teacherId,
+                teacherName: teacherName,
+                severity: "critical",
+                message: `Teacher ${teacherName} (${teacherId}) is simultaneously assigned to ${otherClasses.join( ', ' )} on ${day} Period P${periodNum}.`
+            } );
+        } );
+    }
+
+    return conflicts;
+}
+
+function checkMissingSubjectPeriods() {
+    const violations = [];
+    if ( !state.timetableData || !state.teacherMappings ) return violations;
+
+    const scheduledCounts = {}; // className -> subject -> count
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        scheduledCounts[className] = {};
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const subject = toCleanString( period.subject );
+                if ( !subject ) return;
+                scheduledCounts[className][subject] = ( scheduledCounts[className][subject] || 0 ) + 1;
+            } );
+        } );
+    }
+
+    ( state.teacherMappings || [] ).forEach( mapping => {
+        const expectedCount = Math.max( 0, Number( mapping.periodsPerWeek ) || 0 );
+        if ( expectedCount === 0 ) return;
+
+        const classNames = parseGradeSectionParts( mapping.gradeSection )
+            .flatMap( part => resolveMappingToClassNames( part ) )
+            .filter( Boolean );
+        const uniqueClassNames = [...new Set( classNames )];
+
+        uniqueClassNames.forEach( className => {
+            if ( !state.timetableData[className] ) return;
+
+            const subjectCode = mapping.subject;
+            const actualCount = ( scheduledCounts[className] && scheduledCounts[className][subjectCode] ) || 0;
+
+            if ( actualCount < expectedCount ) {
+                violations.push( {
+                    type: "missing_subject_periods",
+                    class: className,
+                    subject: subjectCode,
+                    teacherId: mapping.teacherId,
+                    teacherName: mapping.teacherName || findTeacherNameById( mapping.teacherId ),
+                    expected: expectedCount,
+                    actual: actualCount,
+                    severity: "warning",
+                    message: `Class ${className} has only ${actualCount} of ${expectedCount} expected periods scheduled for subject ${subjectCode}.`
+                } );
+            }
+        } );
+    } );
+
+    return violations;
+}
+
+function checkTeacherWorkload() {
+    const violations = [];
+    if ( !state.timetableData ) return violations;
+
+    const limit = state.config.periodsPerTeacher || 30;
+    const teacherAssignments = {}; // teacherName/Id -> Set of day|period
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const teacherName = toCleanString( period.teacherName );
+                const teacherId = toCleanString( period.teacherId || findTeacherIdByName( teacherName ) );
+                if ( !teacherName ) return;
+
+                const key = `${teacherId || teacherName}`;
+                if ( !teacherAssignments[key] ) {
+                    teacherAssignments[key] = {
+                        teacherId: teacherId,
+                        teacherName: teacherName,
+                        slots: new Set()
+                    };
+                }
+                teacherAssignments[key].slots.add( `${day.dayName}|${period.period}` );
+            } );
+        } );
+    }
+
+    for ( const [key, info] of Object.entries( teacherAssignments ) ) {
+        const actualCount = info.slots.size;
+        if ( actualCount > limit ) {
+            violations.push( {
+                type: "teacher_workload",
+                teacherId: info.teacherId,
+                teacherName: info.teacherName,
+                limit: limit,
+                actual: actualCount,
+                severity: "warning",
+                message: `Teacher ${info.teacherName} (${info.teacherId || 'N/A'}) teaches ${actualCount} periods per week, exceeding the limit of ${limit}.`
+            } );
+        }
+    }
+
+    return violations;
+}
+
+function checkLabViolations() {
+    const violations = [];
+    if ( !state.timetableData ) return violations;
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        ( classData.days || [] ).forEach( day => {
+            const cscPeriods = ( day.periods || [] ).filter( p => toCleanString( p.subject ).toUpperCase() === 'CSC' );
+            if ( cscPeriods.length === 0 ) return;
+
+            cscPeriods.forEach( p => {
+                const periodNum = p.period;
+                let isValid = false;
+
+                if ( periodNum === 1 ) {
+                    const p2 = day.periods.find( x => x.period === 2 );
+                    if ( p2 && toCleanString( p2.subject ).toUpperCase() === 'CSC' ) {
+                        isValid = true;
+                    }
+                } else if ( periodNum === 2 ) {
+                    const p1 = day.periods.find( x => x.period === 1 );
+                    if ( p1 && toCleanString( p1.subject ).toUpperCase() === 'CSC' ) {
+                        isValid = true;
+                    }
+                } else if ( periodNum === 5 ) {
+                    const p6 = day.periods.find( x => x.period === 6 );
+                    if ( p6 && toCleanString( p6.subject ).toUpperCase() === 'CSC' ) {
+                        isValid = true;
+                    }
+                } else if ( periodNum === 6 ) {
+                    const p5 = day.periods.find( x => x.period === 5 );
+                    if ( p5 && toCleanString( p5.subject ).toUpperCase() === 'CSC' ) {
+                        isValid = true;
+                    }
+                }
+
+                if ( !isValid ) {
+                    const teacherId = p.teacherId || findTeacherIdByName( p.teacherName );
+                    violations.push( {
+                        type: "lab_violation",
+                        class: className,
+                        day: day.dayName,
+                        period: `P${periodNum}`,
+                        teacherId: teacherId,
+                        teacherName: p.teacherName,
+                        subject: p.subject,
+                        severity: "critical",
+                        message: `Lab subject ${p.subject} for class ${className} on ${day.dayName} Period P${periodNum} violates the constraint of using consecutive blocks of P1-P2 or P5-P6.`
+                    } );
+                }
+            } );
+        } );
+    }
+
+    return violations;
+}
+
+function checkFixedPeriodViolations() {
+    const violations = [];
+    if ( !state.timetableData || !state.teacherMappings ) return violations;
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        const relevantMappings = ( state.teacherMappings || [] ).filter( m => {
+            if ( !m.fixedPeriods ) return false;
+            const classNames = parseGradeSectionParts( m.gradeSection )
+                .flatMap( part => resolveMappingToClassNames( part ) )
+                .filter( Boolean );
+            return classNames.includes( className );
+        } );
+
+        if ( relevantMappings.length === 0 ) continue;
+
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const subject = toCleanString( period.subject );
+                if ( !subject ) return;
+
+                const matchingMapping = relevantMappings.find( m => {
+                    const matchesSubject = toCleanString( m.subject ).toLowerCase() === subject.toLowerCase();
+                    const cleanTeacherId = toCleanString( m.teacherId ).toLowerCase();
+                    const cellTeacherId = toCleanString( period.teacherId || findTeacherIdByName( period.teacherName ) ).toLowerCase();
+                    const matchesTeacher = cleanTeacherId && cellTeacherId && ( cleanTeacherId === cellTeacherId );
+                    return matchesSubject && matchesTeacher;
+                } );
+
+                if ( !matchingMapping ) return;
+
+                const allowedGroups = parseFixedPeriodGroups( matchingMapping.fixedPeriods );
+                const allowedPeriods = [...new Set( allowedGroups.flat() )];
+
+                if ( allowedPeriods.length > 0 && !allowedPeriods.includes( period.period ) ) {
+                    const teacherId = period.teacherId || findTeacherIdByName( period.teacherName );
+                    violations.push( {
+                        type: "fixed_period_violation",
+                        class: className,
+                        day: day.dayName,
+                        period: `P${period.period}`,
+                        teacherId: teacherId,
+                        teacherName: period.teacherName,
+                        subject: period.subject,
+                        allowedPeriods: matchingMapping.fixedPeriods,
+                        severity: "warning",
+                        message: `Subject ${period.subject} for class ${className} is scheduled on ${day.dayName} at Period P${period.period}, violating the fixed period constraint of ${matchingMapping.fixedPeriods}.`
+                    } );
+                }
+            } );
+        } );
+    }
+
+    return violations;
+}
+
+function generateGenerationReport() {
+    const criticalIssues = [];
+    const warnings = [];
+    const passedChecks = [];
+
+    // Run checks
+    const conflicts = checkTeacherConflicts();
+    const missingPeriods = checkMissingSubjectPeriods();
+    const workloads = checkTeacherWorkload();
+    const labViolations = checkLabViolations();
+    const fixedViolations = checkFixedPeriodViolations();
+
+    criticalIssues.push( ...conflicts );
+    criticalIssues.push( ...labViolations );
+
+    warnings.push( ...missingPeriods );
+    warnings.push( ...workloads );
+    warnings.push( ...fixedViolations );
+
+    // Determine passed checks
+    if ( conflicts.length === 0 ) {
+        passedChecks.push( "Teacher conflict check passed: No teacher overlaps detected." );
+    }
+    if ( labViolations.length === 0 ) {
+        passedChecks.push( "Lab block validation passed: All CSC periods scheduled in valid consecutive blocks." );
+    }
+    if ( workloads.length === 0 ) {
+        passedChecks.push( "Teacher workload check passed: No teachers exceed their workload limits." );
+    }
+    if ( fixedViolations.length === 0 ) {
+        passedChecks.push( "Fixed period check passed: All fixed period assignments satisfy mapping constraints." );
+    }
+    if ( missingPeriods.length === 0 ) {
+        passedChecks.push( "Class subject requirements check passed: No classes are missing their required subject periods." );
+    }
+
+    return {
+        criticalIssues,
+        warnings,
+        passedChecks,
+        summary: {
+            critical: criticalIssues.length,
+            warning: warnings.length,
+            passed: passedChecks.length
+        }
+    };
+}
+
+// --- Caveat Detection UI Dashboard ---
+
+function renderGenerationReport() {
+    const container = document.getElementById( 'generationReportContainer' );
+    if ( !container ) return;
+
+    if ( !state.timetableData ) {
+        container.style.display = 'none';
+        return;
+    }
+
+    const report = generateGenerationReport();
+
+    const criticalCount = report.summary.critical;
+    const warningCount = report.summary.warning;
+    const passedCount = report.summary.passed;
+
+    const teacherConflictsCount = report.criticalIssues.filter( i => i.type === 'teacher_conflict' ).length;
+    const missingSubjectCount = report.warnings.filter( i => i.type === 'missing_subject_periods' ).length;
+    const overloadedTeachersCount = report.warnings.filter( i => i.type === 'teacher_workload' ).length;
+
+    let html = `
+        <div class="report-section">
+            <div class="report-section-title">
+                <i class="fas fa-chart-bar" style="color: var(--primary-color);"></i>
+                Timetable Generation Report
+                <button class="btn btn-secondary btn-sm" style="margin-left: auto;" onclick="document.getElementById('generationReportContainer').style.display='none'">
+                    <i class="fas fa-times"></i> Dismiss Report
+                </button>
+            </div>
+
+            <!-- Report Summary Cards Grid -->
+            <div class="report-summary-grid">
+                <div class="report-summary-card critical">
+                    <h4>Critical Issues</h4>
+                    <div class="count">${criticalCount}</div>
+                </div>
+                <div class="report-summary-card warning">
+                    <h4>Warnings</h4>
+                    <div class="count">${warningCount}</div>
+                </div>
+                <div class="report-summary-card success">
+                    <h4>Passed Checks</h4>
+                    <div class="count">${passedCount}</div>
+                </div>
+                <div class="report-summary-card">
+                    <h4>Teacher Conflicts</h4>
+                    <div class="count">${teacherConflictsCount}</div>
+                </div>
+                <div class="report-summary-card">
+                    <h4>Missing Subjects</h4>
+                    <div class="count">${missingSubjectCount}</div>
+                </div>
+                <div class="report-summary-card">
+                    <h4>Overloaded Teachers</h4>
+                    <div class="count">${overloadedTeachersCount}</div>
+                </div>
+            </div>
+    `;
+
+    // 1. Critical Issues Section
+    html += `
+        <div class="report-subtitle-header" onclick="toggleReportSection(this)">
+            <span class="chevron-icon"><i class="fas fa-chevron-down"></i></span>
+            <span class="title-text"><i class="fas fa-times-circle" style="color: #ef4444;"></i> Critical Issues (${criticalCount})</span>
+        </div>
+        <div class="collapsible-content">
+    `;
+    if ( report.criticalIssues.length === 0 ) {
+        html += `<p style="color: #64748b; font-size: 0.9rem; padding: 10px 0;"><i class="fas fa-check-circle" style="color: #10b981;"></i> No critical issues found.</p>`;
+    } else {
+        html += `
+            <div class="carousel-wrapper">
+                <button class="carousel-btn" onclick="scrollCarousel(this, -1)"><i class="fas fa-chevron-left"></i></button>
+                <div class="carousel-container">
+        `;
+        report.criticalIssues.forEach( i => {
+            const classLabel = i.class;
+            const dayLabel = i.day;
+            const periodLabel = i.period;
+            const teacherName = i.teacherName;
+            const message = i.message;
+
+            html += `
+                <div class="caveat-card critical">
+                    <div>
+                        <div class="caveat-card-header">
+                            <i class="fas fa-exclamation-circle"></i> ${i.type === 'teacher_conflict' ? 'Teacher Conflict' : 'Lab Block Violation'}
+                        </div>
+                        <div class="caveat-details-grid">
+                            <div><strong>Teacher:</strong> ${teacherName}</div>
+                            <div><strong>Class:</strong> ${classLabel}</div>
+                            <div><strong>Day:</strong> ${dayLabel}</div>
+                            <div><strong>Period:</strong> ${periodLabel}</div>
+                        </div>
+                        <div class="caveat-reason">${message}</div>
+                    </div>
+                    <button class="btn btn-primary btn-sm caveat-action-btn" onclick="openCellInModifyTimetable('${escapeHtmlJS(classLabel)}', '${escapeHtmlJS(dayLabel)}', ${parseInt(periodLabel.replace('P',''))})">
+                        <i class="fas fa-external-link-alt"></i> Open in Modify Timetable
+                    </button>
+                </div>
+            `;
+        } );
+        html += `
+                </div>
+                <button class="carousel-btn" onclick="scrollCarousel(this, 1)"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        `;
+    }
+    html += `</div>`;
+
+    // 2. Warnings Section
+    html += `
+        <div class="report-subtitle-header" onclick="toggleReportSection(this)">
+            <span class="chevron-icon"><i class="fas fa-chevron-down"></i></span>
+            <span class="title-text"><i class="fas fa-exclamation-triangle" style="color: #f59e0b;"></i> Warnings (${warningCount})</span>
+        </div>
+        <div class="collapsible-content">
+    `;
+    if ( report.warnings.length === 0 ) {
+        html += `<p style="color: #64748b; font-size: 0.9rem; padding: 10px 0;"><i class="fas fa-check-circle" style="color: #10b981;"></i> No warnings found.</p>`;
+    } else {
+        html += `
+            <div class="carousel-wrapper">
+                <button class="carousel-btn" onclick="scrollCarousel(this, -1)"><i class="fas fa-chevron-left"></i></button>
+                <div class="carousel-container">
+        `;
+        report.warnings.forEach( i => {
+            const classLabel = i.class || 'All Classes';
+            const dayLabel = i.day || 'N/A';
+            const periodLabel = i.period || 'N/A';
+            const teacherName = i.teacherName;
+            const message = i.message;
+
+            let actionBtnHtml = '';
+            if ( i.class && i.day && i.period && i.period !== 'N/A' ) {
+                actionBtnHtml = `
+                    <button class="btn btn-primary btn-sm caveat-action-btn" onclick="openCellInModifyTimetable('${escapeHtmlJS(classLabel)}', '${escapeHtmlJS(dayLabel)}', ${parseInt(periodLabel.replace('P',''))})">
+                        <i class="fas fa-external-link-alt"></i> Open in Modify Timetable
+                    </button>
+                `;
+            } else if ( i.class ) {
+                actionBtnHtml = `
+                    <button class="btn btn-primary btn-sm caveat-action-btn" onclick="openCellInModifyTimetable('${escapeHtmlJS(classLabel)}', 'Monday', 1)">
+                        <i class="fas fa-external-link-alt"></i> Open Class in Modify
+                    </button>
+                `;
+            }
+
+            html += `
+                <div class="caveat-card warning">
+                    <div>
+                        <div class="caveat-card-header">
+                            <i class="fas fa-exclamation-triangle"></i> ${i.type === 'teacher_workload' ? 'Workload Warning' : i.type === 'fixed_period_violation' ? 'Fixed Period Violation' : 'Subject Periods Shortage'}
+                        </div>
+                        <div class="caveat-details-grid">
+                            <div><strong>Teacher:</strong> ${teacherName}</div>
+                            <div><strong>Class:</strong> ${classLabel}</div>
+                            ${i.day && i.day !== 'N/A' ? `<div><strong>Day:</strong> ${dayLabel}</div>` : ''}
+                            ${i.period && i.period !== 'N/A' ? `<div><strong>Period:</strong> ${periodLabel}</div>` : ''}
+                        </div>
+                        <div class="caveat-reason">${message}</div>
+                    </div>
+                    ${actionBtnHtml}
+                </div>
+            `;
+        } );
+        html += `
+                </div>
+                <button class="carousel-btn" onclick="scrollCarousel(this, 1)"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        `;
+    }
+    html += `</div>`;
+
+    // 3. Passed Checks Section
+    html += `
+        <div class="report-subtitle-header" onclick="toggleReportSection(this)">
+            <span class="chevron-icon"><i class="fas fa-chevron-down"></i></span>
+            <span class="title-text"><i class="fas fa-check-circle" style="color: #10b981;"></i> Passed Checks (${passedCount})</span>
+        </div>
+        <div class="collapsible-content">
+    `;
+    if ( report.passedChecks.length === 0 ) {
+        html += `<p style="color: #64748b; font-size: 0.9rem; padding: 10px 0;">No passed checks recorded.</p>`;
+    } else {
+        html += `
+            <div class="carousel-wrapper">
+                <button class="carousel-btn" onclick="scrollCarousel(this, -1)"><i class="fas fa-chevron-left"></i></button>
+                <div class="carousel-container">
+        `;
+        report.passedChecks.forEach( c => {
+            html += `
+                <div class="passed-check-card">
+                    <div class="passed-check-icon"><i class="fas fa-check-circle"></i></div>
+                    <div class="passed-check-text">${c}</div>
+                </div>
+            `;
+        } );
+        html += `
+                </div>
+                <button class="carousel-btn" onclick="scrollCarousel(this, 1)"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        `;
+    }
+    html += `</div>`;
+
+    // 4. Subject Completion Summary Section
+    html += `
+        <div class="report-subtitle-header" onclick="toggleReportSection(this)">
+            <span class="chevron-icon"><i class="fas fa-chevron-down"></i></span>
+            <span class="title-text"><i class="fas fa-tasks"></i> Subject Completion Summary</span>
+        </div>
+        <div class="collapsible-content">
+            ${setupSubjectCompletionSelector()}
+        </div>
+    `;
+
+    // 5. Teacher Workload Section
+    html += `
+        <div class="report-subtitle-header" onclick="toggleReportSection(this)">
+            <span class="chevron-icon"><i class="fas fa-chevron-down"></i></span>
+            <span class="title-text"><i class="fas fa-user-clock"></i> Teacher Workload Summary</span>
+        </div>
+        <div class="collapsible-content">
+            ${renderTeacherWorkloadSummary()}
+        </div>
+    `;
+
+    html += `</div>`;
+
+    container.innerHTML = html;
+    container.style.display = 'block';
+
+    // Populate initial Subject Completion table data
+    if ( state.reportClassesList && state.reportClassesList.length > 0 ) {
+        updateReportClassTable( state.reportClassesList[0] );
+    }
+}
+
+function setupSubjectCompletionSelector() {
+    if ( !state.timetableData || !state.teacherMappings ) {
+        return '<p style="color: #64748b; font-size: 0.9rem; padding: 10px 0;">No timetable data or teacher mappings loaded.</p>';
+    }
+
+    const scheduledCounts = {};
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        scheduledCounts[className] = {};
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const subject = toCleanString( period.subject );
+                if ( !subject ) return;
+                scheduledCounts[className][subject] = ( scheduledCounts[className][subject] || 0 ) + 1;
+            } );
+        } );
+    }
+
+    const expectedMap = {};
+    ( state.teacherMappings || [] ).forEach( mapping => {
+        const expectedCount = Math.max( 0, Number( mapping.periodsPerWeek ) || 0 );
+        if ( expectedCount === 0 ) return;
+
+        const classNames = parseGradeSectionParts( mapping.gradeSection )
+            .flatMap( part => resolveMappingToClassNames( part ) )
+            .filter( Boolean );
+        const uniqueClassNames = [...new Set( classNames )];
+
+        uniqueClassNames.forEach( className => {
+            if ( !expectedMap[className] ) {
+                expectedMap[className] = {};
+            }
+            expectedMap[className][mapping.subject] = {
+                expected: expectedCount,
+                teacherName: mapping.teacherName || findTeacherNameById( mapping.teacherId )
+            };
+        } );
+    } );
+
+    const sortedClasses = Object.keys( state.timetableData ).sort( compareGradeSection );
+    if ( sortedClasses.length === 0 ) {
+        return '<p style="color: #64748b; font-size: 0.9rem; padding: 10px 0;">No classes to show.</p>';
+    }
+
+    state.reportClassData = expectedMap;
+    state.reportScheduledCounts = scheduledCounts;
+    state.reportClassesList = sortedClasses;
+    state.currentReportClassIndex = 0;
+
+    let optionsHtml = '';
+    sortedClasses.forEach( className => {
+        optionsHtml += `<option value="${className}">${className}</option>`;
+    } );
+
+    let html = `
+        <div class="class-nav-container">
+            <button class="btn btn-secondary btn-sm" onclick="navigateClass(-1)">
+                <i class="fas fa-chevron-left"></i> Previous
+            </button>
+            <select id="reportClassSelector" class="form-control" style="width: 240px; display: inline-block;" onchange="updateReportClassTable(this.value)">
+                ${optionsHtml}
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="navigateClass(1)">
+                Next <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+        <div id="reportClassTableContainer"></div>
+    `;
+
+    return html;
+}
+
+function updateReportClassTable( className ) {
+    const tableContainer = document.getElementById( 'reportClassTableContainer' );
+    if ( !tableContainer ) return;
+
+    if ( state.reportClassesList ) {
+        const idx = state.reportClassesList.indexOf( className );
+        if ( idx !== -1 ) {
+            state.currentReportClassIndex = idx;
+        }
+    }
+
+    const classData = state.timetableData[className];
+    if ( !classData ) {
+        tableContainer.innerHTML = '';
+        return;
+    }
+
+    const classExpected = ( state.reportClassData && state.reportClassData[className] ) || {};
+    const classActual = ( state.reportScheduledCounts && state.reportScheduledCounts[className] ) || {};
+
+    const subjects = new Set([
+        ...Object.keys( classExpected ),
+        ...Object.keys( classActual )
+    ]);
+
+    let html = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Subject</th>
+                    <th>Teacher</th>
+                    <th>Required</th>
+                    <th>Completed</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    if ( subjects.size === 0 ) {
+        html += `<tr><td colspan="5" style="text-align: center; color: #64748b;">No subjects mapped for this class.</td></tr>`;
+    } else {
+        Array.from( subjects ).sort().forEach( subject => {
+            const expInfo = classExpected[subject] || { expected: 0, teacherName: 'N/A' };
+            const actCount = classActual[subject] || 0;
+            const reqCount = expInfo.expected;
+            const teacherName = expInfo.teacherName;
+
+            let statusClass = 'ok';
+            let statusText = '✓ OK';
+            
+            if ( actCount < reqCount ) {
+                statusClass = 'warning';
+                statusText = '⚠ Shortage';
+            } else if ( actCount > reqCount ) {
+                statusClass = 'error';
+                statusText = '⚠ Excess';
+            }
+
+            html += `
+                <tr>
+                    <td><strong>${subject}</strong></td>
+                    <td>${teacherName}</td>
+                    <td>${reqCount}</td>
+                    <td>${actCount}</td>
+                    <td><span class="status-badge ${statusClass}">${actCount} / ${reqCount} ${statusText}</span></td>
+                </tr>
+            `;
+        } );
+    }
+
+    html += `</tbody></table>`;
+    tableContainer.innerHTML = html;
+}
+
+function navigateClass( direction ) {
+    if ( !state.reportClassesList || state.reportClassesList.length <= 1 ) return;
+
+    let index = state.currentReportClassIndex + direction;
+    
+    if ( index < 0 ) {
+        index = state.reportClassesList.length - 1;
+    } else if ( index >= state.reportClassesList.length ) {
+        index = 0;
+    }
+
+    state.currentReportClassIndex = index;
+    const className = state.reportClassesList[index];
+
+    const selector = document.getElementById( 'reportClassSelector' );
+    if ( selector ) {
+        selector.value = className;
+    }
+
+    updateReportClassTable( className );
+}
+
+function renderTeacherWorkloadSummary() {
+    if ( !state.timetableData ) return '';
+
+    const limit = state.config.periodsPerTeacher || 30;
+    const teacherAssignments = {};
+
+    for ( const [className, classData] of Object.entries( state.timetableData ) ) {
+        ( classData.days || [] ).forEach( day => {
+            ( day.periods || [] ).forEach( period => {
+                const teacherName = toCleanString( period.teacherName );
+                const teacherId = toCleanString( period.teacherId || findTeacherIdByName( teacherName ) );
+                if ( !teacherName ) return;
+
+                const key = teacherId || teacherName;
+                if ( !teacherAssignments[key] ) {
+                    teacherAssignments[key] = {
+                        teacherId: teacherId,
+                        teacherName: teacherName,
+                        slots: new Set()
+                    };
+                }
+                teacherAssignments[key].slots.add( `${day.dayName}|${period.period}` );
+            } );
+        } );
+    }
+
+    ( state.teachers || [] ).forEach( t => {
+        if ( !teacherAssignments[t.id] && !teacherAssignments[t.name] ) {
+            teacherAssignments[t.id || t.name] = {
+                teacherId: t.id,
+                teacherName: t.name,
+                slots: new Set()
+            };
+        }
+    } );
+
+    const sortedTeachers = Object.values( teacherAssignments ).sort( ( a, b ) => safeLocaleCompare( a.teacherName, b.teacherName ) );
+
+    let html = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Teacher ID</th>
+                    <th>Teacher Name</th>
+                    <th>Assigned</th>
+                    <th>Maximum</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    sortedTeachers.forEach( info => {
+        const assignedCount = info.slots.size;
+        const isOverloaded = assignedCount > limit;
+        const statusClass = isOverloaded ? 'error' : 'ok';
+        const statusText = isOverloaded ? '⚠ Overloaded' : '✓ OK';
+
+        html += `
+            <tr>
+                <td><strong>${info.teacherId || 'N/A'}</strong></td>
+                <td>${info.teacherName}</td>
+                <td>${assignedCount}</td>
+                <td>${limit}</td>
+                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+            </tr>
+        `;
+    } );
+
+    html += `</tbody></table>`;
+    return html;
+}
+
+function scrollCarousel( button, direction ) {
+    const wrapper = button.closest( '.carousel-wrapper' );
+    if ( !wrapper ) return;
+    const container = wrapper.querySelector( '.carousel-container' );
+    if ( !container ) return;
+    
+    const scrollAmount = 336;
+    container.scrollBy( {
+        left: direction * scrollAmount,
+        behavior: 'smooth'
+    } );
+}
+
+function toggleReportSection( header ) {
+    header.classList.toggle( 'collapsed' );
+    const content = header.nextElementSibling;
+    if ( content ) {
+        content.classList.toggle( 'collapsed' );
+    }
+}
+
+function openCellInModifyTimetable(className, dayName, periodNum) {
+    const tab = document.querySelector( '.tab[data-target="modify-timetable-section"]' );
+    if ( tab ) tab.click();
+
+    const classFilter = document.getElementById( 'modifyClassFilter' );
+    if ( classFilter ) {
+        classFilter.value = className;
+    }
+
+    loadTimetableForModification();
+
+    setTimeout( () => {
+        const targetCell = document.querySelector( `#modifyTimetableDisplay td.period-cell[data-day="${dayName}"][data-period="${periodNum}"]` );
+        if ( targetCell ) {
+            targetCell.scrollIntoView( { behavior: 'smooth', block: 'center' } );
+            
+            targetCell.classList.add( 'cell-focus-highlight' );
+            setTimeout( () => {
+                targetCell.classList.remove( 'cell-focus-highlight' );
+            }, 5000 );
+        }
+    }, 150 );
+}
+
+function escapeHtmlJS(str) {
+    if (!str) return '';
+    return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+}

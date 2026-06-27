@@ -113,32 +113,6 @@
                         CSV columns:
                         <code>Teacher ID,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode</code>
                     </p>
-                    
-                    <div class="quick-add-mapping" style="background: var(--bg-tertiary); padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
-                            <label>Class</label>
-                            <select id="quickAddClass" class="form-control"></select>
-                        </div>
-                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
-                            <label>Subject</label>
-                            <select id="quickAddSubject" class="form-control"></select>
-                        </div>
-                        <div class="form-group" style="flex: 0 1 100px; margin-bottom: 0;">
-                            <label>Periods/Week</label>
-                            <input type="number" id="quickAddPeriods" class="form-control" value="5" min="1">
-                        </div>
-                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
-                            <label>Fixed Periods</label>
-                            <select id="quickAddFixedPeriods" class="form-control" multiple></select>
-                        </div>
-                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
-                            <label>Teacher (Optional)</label>
-                            <select id="quickAddTeacher" class="form-control"></select>
-                        </div>
-                        <button class="btn btn-primary" id="quickAddMappingSubmitBtn" style="margin-bottom: 0; white-space: nowrap;">
-                            <i class="fas fa-plus"></i> Quick Add
-                        </button>
-                    </div>
                     <input type="file" id="teacherMappingFileInput" accept=".csv,.txt,.xlsx,.xls">
                     <div class="setup-actions">
                         <label class="btn btn-primary" for="teacherMappingFileInput">
@@ -174,16 +148,10 @@
                 
                 <div class="setup-panel">
                     <h3><i class="fas fa-layer-group"></i> Bulk Classes & Sections</h3>
-                    <p>Enter classes and sections line by line. Examples:<br>Class: <code>10</code>, Section: <code>A</code> or Class: <code>5</code>, Section: <code>A,B</code></p>
-                    <div class="form-row" style="display: flex; gap: 15px;">
-                        <div class="form-group" style="flex: 1;">
-                            <label for="bulkClassesIdInput">Bulk Classes Input</label>
-                            <textarea id="bulkClassesIdInput" class="form-control" rows="4" placeholder="Example:\n10\n5"></textarea>
-                        </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label for="bulkClassesDetailsInput">Bulk Sections Input</label>
-                            <textarea id="bulkClassesDetailsInput" class="form-control" rows="4" placeholder="Example:\nA\nA,B"></textarea>
-                        </div>
+                    <p>Enter one class per line. Examples:<br><code>10:A</code> or <code>5:A,B</code> or <code>6:A,B,C</code></p>
+                    <div class="form-group">
+                        <label for="bulkClassesInput">Bulk Classes Input</label>
+                        <textarea id="bulkClassesInput" class="form-control" rows="4" placeholder="Example:\n10:A\n5:A,B"></textarea>
                     </div>
                     <div class="setup-actions">
                         <button class="btn btn-primary" id="generateClassSectionsBtn"><i class="fas fa-magic"></i> Generate Classes</button>
@@ -198,13 +166,17 @@
                 </div>
                 <div class="setup-panel">
                     <h3><i class="fas fa-book-open"></i> Bulk Subjects</h3>
-                    <p>Add subjects manually or import a CSV with a <code>Subject</code> header.</p>
-                    <input type="file" id="importSubjectsFile" accept=".csv,.txt" style="display:none">
+                    <p>Enter one subject per line, or import a CSV with a <code>Subject</code> header.</p>
+                    <div class="form-group">
+                        <label for="bulkSubjectsInput">Bulk Subjects Input</label>
+                        <textarea id="bulkSubjectsInput" class="form-control" rows="4" placeholder="Example:\nMathematics\nEnglish\nEVS"></textarea>
+                    </div>
                     <div class="setup-actions">
+                        <button class="btn btn-primary" id="generateSubjectsBtn"><i class="fas fa-magic"></i> Generate Subjects</button>
+                        <button class="btn btn-secondary" id="clearSubjectsBtn"><i class="fas fa-trash"></i> Clear</button>
+                        <input type="file" id="importSubjectsFile" accept=".csv,.txt" style="display:none">
                         <label class="btn btn-primary" for="importSubjectsFile"><i class="fas fa-file-upload"></i> Import CSV</label>
                         <button class="btn btn-outline" id="exportSubjectsBtn"><i class="fas fa-file-download"></i> Export CSV</button>
-                        <button class="btn btn-secondary" id="addSubjectRowBtn"><i class="fas fa-plus"></i> Add Subject</button>
-                        <button class="btn btn-secondary" id="clearSubjectsBtn"><i class="fas fa-trash"></i> Clear</button>
                     </div>
                     <div class="editable-table-wrap">
                         <table class="editable-table" id="subjectsTable"></table>
@@ -370,6 +342,9 @@
                 </div>
             </div>
             
+            <!-- Timetable Generation Report Container -->
+            <div id="generationReportContainer" style="display: none; margin-bottom: 30px;"></div>
+            
             <div class="timetable-container">
                 <div id="timetableDisplay">
                     <div class="empty-state">
@@ -505,6 +480,15 @@
                 <button class="btn btn-primary" id="loadTimetableBtn">
                     <i class="fas fa-sync-alt"></i> Load Timetable
                 </button>
+                <button class="btn btn-success" id="saveAllChangesBtn" disabled>
+                    <i class="fas fa-save"></i> Save Changes
+                </button>
+                <button class="btn btn-danger" id="cancelAllChangesBtn" disabled>
+                    <i class="fas fa-times"></i> Cancel Changes
+                </button>
+                <button class="btn btn-secondary" id="undoEditBtn" disabled>
+                    <i class="fas fa-undo"></i> Undo
+                </button>
             </div>
             
             <div class="timetable-container">
@@ -637,6 +621,46 @@
             </div>
         </div>
     </div>
+    
+    <!-- Edit Cell Modal -->
+    <div class="modal" id="editCellModal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Edit Timetable Cell</h3>
+                <button class="close-modal" id="closeEditCellModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="background-color: #f5f7ff; border: 1px solid #e1e7ff; border-radius: 6px; padding: 15px; margin-bottom: 20px;">
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.95rem;">
+                        <div><strong>Class:</strong> <span id="editModalClass">-</span></div>
+                        <div><strong>Day:</strong> <span id="editModalDay">-</span></div>
+                        <div><strong>Period:</strong> <span id="editModalPeriod">-</span></div>
+                        <div><strong>Current Subject:</strong> <span id="editModalCurrentSubject">-</span></div>
+                        <div style="grid-column: span 2;"><strong>Current Teacher:</strong> <span id="editModalCurrentTeacher">-</span></div>
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="editModalSubjectSelect">Select Subject</label>
+                    <select id="editModalSubjectSelect" class="form-control">
+                        <option value="">Select Subject</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="editModalTeacherSelect">Select Teacher</label>
+                    <select id="editModalTeacherSelect" class="form-control">
+                        <option value="">Select Teacher</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelEditCellBtn">Cancel</button>
+                <button class="btn btn-success" id="saveEditCellBtn">Save</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="script.js"></script>
 </body>
 </html>
