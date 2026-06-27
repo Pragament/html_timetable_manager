@@ -310,6 +310,8 @@ function setupEventListeners() {
     if ( importSubjectsInput ) importSubjectsInput.addEventListener( 'change', handleImportSubjectsCSV );
     document.getElementById( 'saveMasterDataBtn' ).addEventListener( 'click', saveMasterDataFromTables );
     document.getElementById( 'downloadDataTemplatesBtn' ).addEventListener( 'click', downloadMasterDataTemplates );
+    const quickAddMappingSubmitBtn = document.getElementById( 'quickAddMappingSubmitBtn' );
+    if ( quickAddMappingSubmitBtn ) quickAddMappingSubmitBtn.addEventListener( 'click', handleQuickAddMappingSubmit );
     createGenerateButton();
     document.getElementById( 'generatePromptBtn' ).addEventListener( 'click', renderAIPrompt );
     document.getElementById( 'copyPromptBtn' ).addEventListener( 'click', copyAIPrompt );
@@ -455,6 +457,7 @@ function updateSetupSummary() {
     document.getElementById( 'masterMappingsCount' ).textContent = ( state.teacherMappings || [] ).length;
     document.getElementById( 'configDaysCount' ).textContent = ( state.config.schoolDays || [] ).length;
     document.getElementById( 'configPeriodsCount' ).textContent = state.config.periodsPerDay || 0;
+    updateQuickAddDropdowns();
 }
 
 function escapeHtml( value ) {
@@ -660,6 +663,7 @@ function mergeTeacherMappings( existing, imported ) {
 }
 
 function findTeacherNameById( teacherId ) {
+    if ( toCleanString( teacherId ).toUpperCase() === 'UNASSIGNED' ) return 'Unassigned';
     const teacher = ( state.teachers || [] ).find( item => toCleanString( item.id ).toLowerCase() === toCleanString( teacherId ).toLowerCase() );
     return teacher ? teacher.name : '';
 }
@@ -759,7 +763,7 @@ function renderTeacherMappingTable() {
 
         return `
                         <tr data-index="${index}">
-                            <td><select data-field="teacherId"><option value=""></option>${( state.teachers || [] ).map( t => `<option value="${escapeHtml( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` ).join( '' )}</select></td>
+                            <td><select data-field="teacherId"><option value=""></option><option value="UNASSIGNED"${mapping.teacherId === 'UNASSIGNED' ? ' selected' : ''}>Unassigned</option>${( state.teachers || [] ).map( t => `<option value="${escapeHtml( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` ).join( '' )}</select></td>
                             <td>
                                 <select data-field="gradeSection" multiple>
                                     ${classOptions.map( option => `
@@ -1250,6 +1254,18 @@ function addSubjectRow() {
     updateSetupSummary();
 }
 
+function deleteSubject( index ) {
+    const table = document.getElementById( 'subjectsTable' );
+    if ( !table ) return;
+    const row = table.querySelector(`tr[data-index="${index}"]`);
+    if ( row ) {
+        row.remove();
+    }
+    saveMasterDataFromTablesWithoutAlert();
+    renderSubjectsTable();
+    updateSetupSummary();
+}
+
 function getSubjectOptions() {
     return ( state.subjects || [] ).slice().sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
 }
@@ -1505,6 +1521,78 @@ function deleteMappingRow( index ) {
     renderTeacherMappingTable();
     updateSetupSummary();
     renderAIPrompt();
+}
+
+function handleQuickAddMappingSubmit() {
+    const className = document.getElementById('quickAddClass').value;
+    const subject = document.getElementById('quickAddSubject').value;
+    const periods = parseInt(document.getElementById('quickAddPeriods').value) || 5;
+    const teacherId = document.getElementById('quickAddTeacher').value;
+
+    if (!className || !subject) {
+        alert("Please select a Class and Subject first. (You might need to add Classes and Subjects in the panels above).");
+        return;
+    }
+
+    saveMasterDataFromTablesWithoutAlert();
+    state.teacherMappings = state.teacherMappings || [];
+    
+    // Check if mapping already exists
+    const exists = state.teacherMappings.some(m => 
+        toCleanString(m.gradeSection) === toCleanString(className) && 
+        toCleanString(m.subject) === toCleanString(subject) &&
+        toCleanString(m.teacherId) === toCleanString(teacherId || "UNASSIGNED")
+    );
+
+    if (exists) {
+        if (!confirm("A similar mapping already exists. Add anyway?")) return;
+    }
+
+    state.teacherMappings.push({
+        id: `M${state.teacherMappings.length + 1}`,
+        teacherId: teacherId || "UNASSIGNED",
+        teacherName: teacherId ? findTeacherNameById(teacherId) : "Unassigned",
+        gradeSection: className,
+        subject: subject,
+        periodsPerWeek: periods,
+        fixedPeriods: "",
+        mode: "0"
+    });
+
+    rebuildTeacherSubjectMapFromMasterData();
+    saveMasterDataToStorage();
+    saveTeacherSubjectMapToStorage();
+    renderTeacherMappingTable();
+    updateSetupSummary();
+    renderAIPrompt();
+}
+
+function updateQuickAddDropdowns() {
+    const classSelect = document.getElementById('quickAddClass');
+    const subjectSelect = document.getElementById('quickAddSubject');
+    const teacherSelect = document.getElementById('quickAddTeacher');
+    if (!classSelect || !subjectSelect || !teacherSelect) return;
+
+    const selectedClass = classSelect.value;
+    const selectedSubject = subjectSelect.value;
+    const selectedTeacher = teacherSelect.value;
+
+    const classOptions = getClassSectionOptions();
+    classSelect.innerHTML = classOptions.map(c => 
+        `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)}</option>`
+    ).join('');
+
+    subjectSelect.innerHTML = (state.subjects || []).map(s => 
+        `<option value="${escapeHtml(s.code)}">${escapeHtml(s.name)} (${escapeHtml(s.code)})</option>`
+    ).join('');
+
+    teacherSelect.innerHTML = '<option value="">Unassigned</option>' + (state.teachers || []).map(t => 
+        `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)} (${escapeHtml(t.id)})</option>`
+    ).join('');
+
+    if (selectedClass) classSelect.value = selectedClass;
+    if (selectedSubject) subjectSelect.value = selectedSubject;
+    if (selectedTeacher) teacherSelect.value = selectedTeacher;
 }
 
 function rebuildTeacherSubjectMapFromMasterData() {
@@ -2039,6 +2127,10 @@ function validateTeacherSelection( teacherId, teacherName ) {
 
     if ( !id && !name ) {
         return { valid: false, error: 'Both Teacher ID and Teacher Name are empty' };
+    }
+
+    if ( id.toUpperCase() === 'UNASSIGNED' || name.toLowerCase() === 'unassigned' ) {
+        return { valid: true, teacherId: 'UNASSIGNED', teacherName: 'Unassigned' };
     }
 
     const teachers = state.teachers || [];

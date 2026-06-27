@@ -113,6 +113,28 @@
                         CSV columns:
                         <code>Teacher ID,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode</code>
                     </p>
+                    
+                    <div class="quick-add-mapping" style="background: var(--bg-tertiary); padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Class</label>
+                            <select id="quickAddClass" class="form-control"></select>
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Subject</label>
+                            <select id="quickAddSubject" class="form-control"></select>
+                        </div>
+                        <div class="form-group" style="flex: 0 1 100px; margin-bottom: 0;">
+                            <label>Periods/Week</label>
+                            <input type="number" id="quickAddPeriods" class="form-control" value="5" min="1">
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Teacher (Optional)</label>
+                            <select id="quickAddTeacher" class="form-control"></select>
+                        </div>
+                        <button class="btn btn-primary" id="quickAddMappingSubmitBtn" style="margin-bottom: 0; white-space: nowrap;">
+                            <i class="fas fa-plus"></i> Quick Add
+                        </button>
+                    </div>
                     <input type="file" id="teacherMappingFileInput" accept=".csv,.txt,.xlsx,.xls">
                     <div class="setup-actions">
                         <label class="btn btn-primary" for="teacherMappingFileInput">
