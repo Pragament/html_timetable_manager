@@ -113,6 +113,32 @@
                         CSV columns:
                         <code>Teacher ID,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode</code>
                     </p>
+                    
+                    <div class="quick-add-mapping" style="background: var(--bg-tertiary); padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Class</label>
+                            <select id="quickAddClass" class="form-control"></select>
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Subject</label>
+                            <select id="quickAddSubject" class="form-control"></select>
+                        </div>
+                        <div class="form-group" style="flex: 0 1 100px; margin-bottom: 0;">
+                            <label>Periods/Week</label>
+                            <input type="number" id="quickAddPeriods" class="form-control" value="5" min="1">
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Fixed Periods</label>
+                            <select id="quickAddFixedPeriods" class="form-control" multiple></select>
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 150px; margin-bottom: 0;">
+                            <label>Teacher (Optional)</label>
+                            <select id="quickAddTeacher" class="form-control"></select>
+                        </div>
+                        <button class="btn btn-primary" id="quickAddMappingSubmitBtn" style="margin-bottom: 0; white-space: nowrap;">
+                            <i class="fas fa-plus"></i> Quick Add
+                        </button>
+                    </div>
                     <input type="file" id="teacherMappingFileInput" accept=".csv,.txt,.xlsx,.xls">
                     <div class="setup-actions">
                         <label class="btn btn-primary" for="teacherMappingFileInput">
@@ -148,10 +174,16 @@
                 
                 <div class="setup-panel">
                     <h3><i class="fas fa-layer-group"></i> Bulk Classes & Sections</h3>
-                    <p>Enter one class per line. Examples:<br><code>10:A</code> or <code>5:A,B</code> or <code>6:A,B,C</code></p>
-                    <div class="form-group">
-                        <label for="bulkClassesInput">Bulk Classes Input</label>
-                        <textarea id="bulkClassesInput" class="form-control" rows="4" placeholder="Example:\n10:A\n5:A,B"></textarea>
+                    <p>Enter classes and sections line by line. Examples:<br>Class: <code>10</code>, Section: <code>A</code> or Class: <code>5</code>, Section: <code>A,B</code></p>
+                    <div class="form-row" style="display: flex; gap: 15px;">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="bulkClassesIdInput">Bulk Classes Input</label>
+                            <textarea id="bulkClassesIdInput" class="form-control" rows="4" placeholder="Example:\n10\n5"></textarea>
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label for="bulkClassesDetailsInput">Bulk Sections Input</label>
+                            <textarea id="bulkClassesDetailsInput" class="form-control" rows="4" placeholder="Example:\nA\nA,B"></textarea>
+                        </div>
                     </div>
                     <div class="setup-actions">
                         <button class="btn btn-primary" id="generateClassSectionsBtn"><i class="fas fa-magic"></i> Generate Classes</button>
@@ -166,17 +198,13 @@
                 </div>
                 <div class="setup-panel">
                     <h3><i class="fas fa-book-open"></i> Bulk Subjects</h3>
-                    <p>Enter one subject per line, or import a CSV with a <code>Subject</code> header.</p>
-                    <div class="form-group">
-                        <label for="bulkSubjectsInput">Bulk Subjects Input</label>
-                        <textarea id="bulkSubjectsInput" class="form-control" rows="4" placeholder="Example:\nMathematics\nEnglish\nEVS"></textarea>
-                    </div>
+                    <p>Add subjects manually or import a CSV with a <code>Subject</code> header.</p>
+                    <input type="file" id="importSubjectsFile" accept=".csv,.txt" style="display:none">
                     <div class="setup-actions">
-                        <button class="btn btn-primary" id="generateSubjectsBtn"><i class="fas fa-magic"></i> Generate Subjects</button>
-                        <button class="btn btn-secondary" id="clearSubjectsBtn"><i class="fas fa-trash"></i> Clear</button>
-                        <input type="file" id="importSubjectsFile" accept=".csv,.txt" style="display:none">
                         <label class="btn btn-primary" for="importSubjectsFile"><i class="fas fa-file-upload"></i> Import CSV</label>
                         <button class="btn btn-outline" id="exportSubjectsBtn"><i class="fas fa-file-download"></i> Export CSV</button>
+                        <button class="btn btn-secondary" id="addSubjectRowBtn"><i class="fas fa-plus"></i> Add Subject</button>
+                        <button class="btn btn-secondary" id="clearSubjectsBtn"><i class="fas fa-trash"></i> Clear</button>
                     </div>
                     <div class="editable-table-wrap">
                         <table class="editable-table" id="subjectsTable"></table>
