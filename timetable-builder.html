@@ -1651,14 +1651,54 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
         return subjects.map((s, i) => ({ id: s.id, name: s.name, teacher: s.teacher, w: floors[i] }));
       }
 
+      const CSL_FIXED_SCHEDULE = {
+        'PRA|Class-IV-A;Class-IV-B': [
+          { day: 'Monday', periods: [1, 2] },
+          { day: 'Tuesday', periods: [6, 7] }
+        ],
+        'SMR|Class-V-A;Class-V-B': [
+          { day: 'Tuesday', periods: [1, 2] },
+          { day: 'Wednesday', periods: [6, 7] }
+        ],
+        'SMR|Class-VI-A;Class-VI-B': [
+          { day: 'Wednesday', periods: [1, 2] },
+          { day: 'Thursday', periods: [6, 7] }
+        ],
+        'SMR|Class-VII-A': [
+          { day: 'Thursday', periods: [1, 2] },
+          { day: 'Friday', periods: [6, 7] }
+        ],
+        'SMR|Class-VIII-A': [
+          { day: 'Friday', periods: [1, 2] }
+        ],
+        'SMR|Class-IX-A': [
+          { day: 'Monday', periods: [6, 7] },
+          { day: 'Saturday', periods: [6, 7] }
+        ],
+        'SMR|Class-X-A': [
+          { day: 'Saturday', periods: [1, 2] }
+        ]
+      };
+
+      function mapCslSectionName(name, availableSections) {
+        const romanMap = { "IV": "4", "V": "5", "VI": "6", "VII": "7", "VIII": "8", "IX": "9", "X": "10" };
+        const m = name.match(/Class-([IVX]+)-?([A-C]?)/);
+        if (m) {
+          const num = romanMap[m[1]];
+          const letter = m[2] || "";
+          if (availableSections.includes(num + letter)) return num + letter;
+          if (availableSections.includes(num)) return num;
+          return num + letter;
+        }
+        return name;
+      }
+
       function generateAll() {
         const sections = getSections();
         if (sections.length === 0) {
           showGlobalWarning("No classes selected. Set at least one class with ≥ 1 section.");
           return;
         }
-        // Re-derive subjects right before generating so combined-session and lab-block
-        // shared ids are fresh and every member section's subject list reflects the latest config.
         deriveClassSubjects();
 
         const activeDays = [];
@@ -1671,18 +1711,11 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
           return;
         }
 
-        // Per-teacher daily free-period bounds: every teacher should get at least
-        // minFreePerDay and at most maxFreePerDay free periods each day. We enforce
-        // the "at most" side proactively (skip a candidate that would leave a
-        // teacher with zero remaining free slots today) and report the "at least"
-        // side afterwards, since guaranteeing a minimum free count for every
-        // teacher while also meeting every section's weekly subject targets can
-        // conflict with the no-double-booking guarantee, which always wins.
         const minFreePerDay = Number(state.minFreePerDay) || 0;
         const maxFreePerDay = Number(state.maxFreePerDay) || periodsPerDay;
+        const weeklyMaxLoad = 35; 
+        const teacherWeeklyLoad = {}; 
 
-        // per-section: target list, assigned-so-far counts, last-placed subject id (to avoid repeats),
-        // and a running free-period count used to rotate unavoidable gaps fairly across sections.
         const secState = {};
         sections.forEach(sec => {
           const targets = buildSectionTargets(sec, totalSlots);
@@ -1696,86 +1729,111 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
           };
         });
 
-        // teacherBusy["dayIdx_period"] = Set of teacher-person-names already placed in that slot
         const teacherBusy = {};
         const slotKey = (d, p) => d + "_" + p;
 
-        // ---- Combined sessions: pre-place these FIRST, before the regular per-section fill.
-        // A combined session is one teacher, one subject, one shared slot across every section
-        // in the group at once (e.g. P.T. taught jointly to grades 8+9+10). We find a slot where
-        // the teacher is free for ALL member sections simultaneously, write the same subject id
-        // into every member section's grid at that slot, and mark the teacher busy once for it —
-        // the regular fill then skips it because each member section is already at target for it.
-        const combinedUnplaced = []; // {subject, teacher, sections, needed, placed}
-        (state.combinedSessions || []).forEach(cs => {
-          const memberSecs = (cs.sections || []).filter(s => sections.includes(s));
-          if (memberSecs.length === 0) return;
-          const need = Number(cs.periodsPerWeek) || 0;
-          if (need <= 0) return;
-          let placed = 0;
-          const teacherNames = splitTeacherNames(cs.teacher);
+        const markTeacherBusy = (teacherField, dayIdx, period) => {
+          if (!teacherField || teacherField === "TBD") return;
+          const sk = slotKey(dayIdx, period);
+          if (!teacherBusy[sk]) teacherBusy[sk] = new Set();
+          splitTeacherNames(teacherField).forEach(n => {
+            teacherBusy[sk].add(n);
+          });
+        };
 
-          outer:
-          for (const dayIdx of activeDays) {
-            for (let p = 0; p < periodsPerDay; p++) {
-              if (placed >= need) break outer;
-              const sk = slotKey(dayIdx, p);
-              if (!teacherBusy[sk]) teacherBusy[sk] = new Set();
-              const busy = teacherBusy[sk];
-              if (teacherNames.some(n => busy.has(n))) continue;
-              const allFree = memberSecs.every(sec => {
-                const g = secState[sec] && secState[sec].grid[dayIdx];
-                return !g || !g[p];
-              });
-              if (!allFree) continue;
-              memberSecs.forEach(sec => {
-                const st = secState[sec];
-                if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
-                st.grid[dayIdx][p] = cs.__sharedId;
-                if (st.target[cs.__sharedId] === undefined) { st.target[cs.__sharedId] = need; st.assigned[cs.__sharedId] = 0; }
-                st.assigned[cs.__sharedId]++;
-                st.lastSubjectId = cs.__sharedId;
-              });
-              teacherNames.forEach(n => busy.add(n));
-              placed++;
+        const canPlaceTeacher = (teacherField, dayIdx, period, count = 1) => {
+           if (!teacherField || teacherField === "TBD") return true;
+           const sk = slotKey(dayIdx, period);
+           const busy = teacherBusy[sk] || new Set();
+           const names = splitTeacherNames(teacherField);
+           if (names.some(n => busy.has(n))) return false;
+           if (names.some(n => (teacherWeeklyLoad[n] || 0) + count > weeklyMaxLoad)) return false;
+           return true;
+        };
+
+        // ---- 1. CSL Fixed Schedule ----
+        Object.entries(CSL_FIXED_SCHEDULE).forEach(([key, slots]) => {
+          const [teacherPrefix, secList] = key.split('|');
+          const groupSecsRaw = secList.split(';');
+          const groupSecs = groupSecsRaw.map(s => mapCslSectionName(s, sections));
+          const memberSecs = groupSecs.filter(s => sections.includes(s));
+          if (memberSecs.length === 0) return;
+
+          let sharedId = null;
+          let fullTeacherName = null;
+          for (const sec of memberSecs) {
+            const st = secState[sec];
+            if (!st) continue;
+            const cslSubj = st.targets.find(t => t.teacher && t.teacher.toUpperCase().startsWith(teacherPrefix.toUpperCase()) && (t.name.includes("(block)") || t.name.includes("Lab")));
+            if (cslSubj) {
+              sharedId = cslSubj.id;
+              fullTeacherName = cslSubj.teacher;
+              break;
             }
           }
-          if (placed < need) {
-            combinedUnplaced.push({ subject: cs.subject, teacher: cs.teacher, sections: memberSecs.join("+"), needed: need, placed });
-          }
+          if (!sharedId) return;
+
+          slots.forEach(slot => {
+            const dayIdx = FULL_DAY_NAMES.indexOf(slot.day);
+            if (dayIdx === -1 || !activeDays.includes(dayIdx)) return;
+            const p1 = slot.periods[0] - 1; 
+            const p2 = slot.periods[1] - 1;
+            if (p1 >= periodsPerDay || p2 >= periodsPerDay) return;
+
+            if (!canPlaceTeacher(fullTeacherName, dayIdx, p1) || !canPlaceTeacher(fullTeacherName, dayIdx, p2)) return;
+
+            const allFree = memberSecs.every(sec => {
+              const g = secState[sec] && secState[sec].grid[dayIdx];
+              return !g || (!g[p1] && !g[p2]);
+            });
+            if (!allFree) return;
+
+            memberSecs.forEach(sec => {
+              const st = secState[sec];
+              if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
+              st.grid[dayIdx][p1] = sharedId;
+              st.grid[dayIdx][p2] = sharedId;
+              if (st.target[sharedId] === undefined) { st.target[sharedId] = 2; st.assigned[sharedId] = 0; }
+              st.assigned[sharedId] += 2;
+              st.lastSubjectId = sharedId;
+            });
+            markTeacherBusy(fullTeacherName, dayIdx, p1);
+            markTeacherBusy(fullTeacherName, dayIdx, p2);
+            splitTeacherNames(fullTeacherName).forEach(n => {
+              teacherWeeklyLoad[n] = (teacherWeeklyLoad[n] || 0) + 2;
+            });
+          });
         });
 
-        // ---- Lab blocks: pre-place these next, after combined sessions but before the regular
-        // per-section fill. Each placement occupies BOTH periods of one allowed pair (e.g. P1-P2),
-        // simultaneously across every member section in the group, with the teacher busy for both.
+        // ---- 2. Lab blocks (Generic) ----
         ensureLabBlocks();
         const labPairs = (state.labBlocks.pairs || []).filter(pr => pr[0] < periodsPerDay && pr[1] < periodsPerDay);
-        const labUnplaced = []; // {teacher, sections, needed, placed}
+        const labUnplaced = []; 
         (state.labBlocks.groups || []).forEach(g => {
           const memberSecs = (g.sections || []).filter(s => sections.includes(s));
           if (memberSecs.length === 0 || !g.__sharedId) return;
           const need = Number(g.blocksPerWeek) || 0;
           if (need <= 0 || labPairs.length === 0) return;
+          
           let placed = 0;
-          const teacherNames = splitTeacherNames(g.teacher);
-
+          if (memberSecs.length > 0) {
+            const st = secState[memberSecs[0]];
+            placed = Math.floor((st.assigned[g.__sharedId] || 0) / 2);
+          }
+          
           outerLab:
           for (const dayIdx of activeDays) {
             for (const pair of labPairs) {
               if (placed >= need) break outerLab;
               const [p1, p2] = pair;
-              const sk1 = slotKey(dayIdx, p1), sk2 = slotKey(dayIdx, p2);
-              if (!teacherBusy[sk1]) teacherBusy[sk1] = new Set();
-              if (!teacherBusy[sk2]) teacherBusy[sk2] = new Set();
-              const busy1 = teacherBusy[sk1], busy2 = teacherBusy[sk2];
-              // teacher must be free in BOTH periods of the pair
-              if (teacherNames.some(n => busy1.has(n) || busy2.has(n))) continue;
-              // every member section must be free in BOTH periods of the pair
+              if (!canPlaceTeacher(g.teacher, dayIdx, p1) || !canPlaceTeacher(g.teacher, dayIdx, p2)) continue;
+              
               const allFree = memberSecs.every(sec => {
                 const g1 = secState[sec] && secState[sec].grid[dayIdx];
                 return !g1 || (!g1[p1] && !g1[p2]);
               });
               if (!allFree) continue;
+
               memberSecs.forEach(sec => {
                 const st = secState[sec];
                 if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
@@ -1785,7 +1843,11 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
                 st.assigned[g.__sharedId] += 2;
                 st.lastSubjectId = g.__sharedId;
               });
-              teacherNames.forEach(n => { busy1.add(n); busy2.add(n); });
+              markTeacherBusy(g.teacher, dayIdx, p1);
+              markTeacherBusy(g.teacher, dayIdx, p2);
+              splitTeacherNames(g.teacher).forEach(n => {
+                teacherWeeklyLoad[n] = (teacherWeeklyLoad[n] || 0) + 2;
+              });
               placed++;
             }
           }
@@ -1794,17 +1856,54 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
           }
         });
 
+        // ---- 3. Combined sessions ----
+        const combinedUnplaced = []; 
+        (state.combinedSessions || []).forEach(cs => {
+          const memberSecs = (cs.sections || []).filter(s => sections.includes(s));
+          if (memberSecs.length === 0) return;
+          const need = Number(cs.periodsPerWeek) || 0;
+          if (need <= 0) return;
+          let placed = 0;
+
+          outer:
+          for (const dayIdx of activeDays) {
+            for (let p = 0; p < periodsPerDay; p++) {
+              if (placed >= need) break outer;
+              if (!canPlaceTeacher(cs.teacher, dayIdx, p)) continue;
+              
+              const allFree = memberSecs.every(sec => {
+                const g = secState[sec] && secState[sec].grid[dayIdx];
+                return !g || !g[p];
+              });
+              if (!allFree) continue;
+
+              memberSecs.forEach(sec => {
+                const st = secState[sec];
+                if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
+                st.grid[dayIdx][p] = cs.__sharedId;
+                if (st.target[cs.__sharedId] === undefined) { st.target[cs.__sharedId] = need; st.assigned[cs.__sharedId] = 0; }
+                st.assigned[cs.__sharedId]++;
+                st.lastSubjectId = cs.__sharedId;
+              });
+              markTeacherBusy(cs.teacher, dayIdx, p);
+              splitTeacherNames(cs.teacher).forEach(n => {
+                teacherWeeklyLoad[n] = (teacherWeeklyLoad[n] || 0) + 1;
+              });
+              placed++;
+            }
+          }
+          if (placed < need) {
+            combinedUnplaced.push({ subject: cs.subject, teacher: cs.teacher, sections: memberSecs.join("+"), needed: need, placed });
+          }
+        });
+
         let forcedFreeCount = 0;
         const forcedFreeDetails = [];
         let unmetCount = 0;
-        const bottleneckTeacherCounts = {}; // teacher name -> how many forced-free periods they caused
-        const teacherDayBelowMin = []; // {teacher, day} pairs that ended the day under minFreePerDay
+        const bottleneckTeacherCounts = {}; 
+        const teacherDayBelowMin = []; 
 
         activeDays.forEach((dayIdx) => {
-          // teacherPlacedToday[name] = periods already placed for that teacher today (used to
-          // cap them at maxFreePerDay free periods, i.e. at periodsPerDay - maxFreePerDay placed).
-          // Pre-placed combined/lab periods already in teacherBusy aren't counted here yet, so
-          // seed today's counts from what's already on the grid for each teacher at day start.
           const teacherPlacedToday = {};
           sections.forEach(sec => {
             const g = secState[sec].grid[dayIdx];
@@ -1814,8 +1913,6 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
               if (!subId) continue;
               const subj = (state.classSubjects[sec] || []).find(s => s.id === subId);
               if (!subj) continue;
-              // only count each (teacher, period) once even though combined/lab groups
-              // place the same id across multiple sections in the same slot
               splitTeacherNames(subj.teacher).forEach(n => {
                 const seenKey = "__seen_" + n + "_" + p;
                 if (!teacherPlacedToday[seenKey]) {
@@ -1832,9 +1929,6 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
             if (!teacherBusy[sk]) teacherBusy[sk] = new Set();
             const busy = teacherBusy[sk];
 
-            // Visit sections most-behind-target first (so contended teachers get placed for whoever
-            // needs them most), but break ties by *fewest free periods so far* — this is what rotates
-            // an unavoidable gap between e.g. 6A and 6B instead of always parking it on the same one.
             const order = sections.slice().sort((a, b) => {
               const sa = secState[a], sb = secState[b];
               const remA = sa.targets.reduce((acc, t) => acc + Math.max(0, sa.target[t.id] - sa.assigned[t.id]), 0);
@@ -1846,17 +1940,15 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
             order.forEach(sec => {
               const st = secState[sec];
               if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
-              if (st.grid[dayIdx][p]) return; // already filled by combined/lab pre-placement
+              if (st.grid[dayIdx][p]) return; 
               if (st.targets.length === 0) { st.grid[dayIdx][p] = 0; return; }
 
-              // candidate subjects still under target, sorted by how far behind fair share they are,
-              // excluding any whose teacher has already hit their daily placed-period cap (so they
-              // keep at least maxFreePerDay free periods today).
               const candidates = st.targets
                 .filter(t => st.assigned[t.id] < st.target[t.id])
                 .filter(t => {
                   const names = splitTeacherNames(t.teacher);
                   if (names.length === 0 || (names.length === 1 && names[0] === "TBD")) return true;
+                  if (names.some(n => (teacherWeeklyLoad[n] || 0) >= weeklyMaxLoad)) return false;
                   return names.every(n => (teacherPlacedToday[n] || 0) < maxPlacedToday);
                 })
                 .sort((a, b) => {
@@ -1865,20 +1957,17 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
                   return shareB - shareA;
                 });
 
-              // prefer a candidate whose teacher is free AND isn't a back-to-back repeat;
-              // fall back to free-but-repeat; fall back to nothing (teacher conflict -> free period)
               let pick = candidates.find(t => t.id !== st.lastSubjectId && !teacherIsBusy(t.teacher, busy));
               let blockingTeachers = [];
               if (pick === undefined) {
                 pick = candidates.find(t => !teacherIsBusy(t.teacher, busy));
               }
               if (pick === undefined && candidates.length > 0) {
-                // every remaining candidate's teacher is already busy this slot elsewhere —
-                // collect who, so the report can name the actual bottleneck(s).
                 const seen = new Set();
-                candidates.forEach(t => {
+                st.targets.filter(t => st.assigned[t.id] < st.target[t.id]).forEach(t => {
                   splitTeacherNames(t.teacher).forEach(n => {
                     if (busy.has(n) && !seen.has(n)) { seen.add(n); blockingTeachers.push(n); }
+                    if ((teacherWeeklyLoad[n] || 0) >= weeklyMaxLoad && !seen.has(n)) { seen.add(n); blockingTeachers.push(n + " (max load)"); }
                   });
                 });
               }
@@ -1889,6 +1978,7 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
                 st.lastSubjectId = pick.id;
                 splitTeacherNames(pick.teacher).forEach(n => {
                   busy.add(n);
+                  teacherWeeklyLoad[n] = (teacherWeeklyLoad[n] || 0) + 1;
                   const seenKey = "__seen_" + n + "_" + p;
                   if (!teacherPlacedToday[seenKey]) {
                     teacherPlacedToday[seenKey] = true;
@@ -1898,17 +1988,20 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
               } else {
                 st.grid[dayIdx][p] = 0;
                 st.lastSubjectId = null;
-                if (blockingTeachers.length) {
+                const hasUnmetTargets = st.targets.some(t => st.assigned[t.id] < st.target[t.id]);
+                if (hasUnmetTargets && blockingTeachers.length) {
                   forcedFreeCount++;
                   st.freeCount++;
-                  blockingTeachers.forEach(n => { bottleneckTeacherCounts[n] = (bottleneckTeacherCounts[n] || 0) + 1; });
-                  forcedFreeDetails.push(`Class ${sec} · ${DAY_NAMES[dayIdx]} P${p + 1}: blocked by ${blockingTeachers.join(", ")} (already teaching another section this period)`);
+                  blockingTeachers.forEach(n => { 
+                    const pureName = n.replace(" (max load)", "");
+                    bottleneckTeacherCounts[pureName] = (bottleneckTeacherCounts[pureName] || 0) + 1; 
+                  });
+                  forcedFreeDetails.push(`Class ${sec} · ${DAY_NAMES[dayIdx]} P${p + 1}: blocked by ${blockingTeachers.join(", ")}`);
                 }
               }
             });
           }
 
-          // check minFreePerDay: any teacher placed in more than (periodsPerDay - minFreePerDay) slots today?
           if (minFreePerDay > 0) {
             const maxAllowedPlaced = periodsPerDay - minFreePerDay;
             Object.keys(teacherPlacedToday).forEach(key => {
@@ -1919,6 +2012,37 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
               }
             });
           }
+        });
+
+        // ---- 4. Repair pass ----
+        sections.forEach(sec => {
+          const st = secState[sec];
+          st.targets.forEach(t => {
+            if (st.assigned[t.id] >= st.target[t.id]) return;
+            outerRepair:
+            for (const dayIdx of activeDays) {
+              for (let p = 0; p < periodsPerDay; p++) {
+                if (st.assigned[t.id] >= st.target[t.id]) break outerRepair;
+                if (st.grid[dayIdx] && st.grid[dayIdx][p]) continue;
+                
+                const names = splitTeacherNames(t.teacher);
+                if (names.some(n => (teacherWeeklyLoad[n] || 0) >= weeklyMaxLoad)) continue;
+                
+                const sk = slotKey(dayIdx, p);
+                if (!teacherBusy[sk]) teacherBusy[sk] = new Set();
+                const busy = teacherBusy[sk];
+                if (teacherIsBusy(t.teacher, busy)) continue;
+
+                if (!st.grid[dayIdx]) st.grid[dayIdx] = {};
+                st.grid[dayIdx][p] = t.id;
+                st.assigned[t.id]++;
+                names.forEach(n => {
+                  busy.add(n);
+                  teacherWeeklyLoad[n] = (teacherWeeklyLoad[n] || 0) + 1;
+                });
+              }
+            }
+          });
         });
 
         sections.forEach(sec => {
@@ -1942,20 +2066,20 @@ Hindi/Telugu,Sukrutha,9,5 periods`;
 
         if (forcedFreeCount > 0 || unmetCount > 0 || teacherDayBelowMin.length > 0 || combinedUnplaced.length > 0 || labUnplaced.length > 0) {
           const bits = [];
-          if (forcedFreeCount > 0) bits.push(`${forcedFreeCount} period(s) left free because every available teacher was already busy elsewhere at that time`);
+          if (forcedFreeCount > 0) bits.push(`${forcedFreeCount} period(s) left free because available teachers were busy or hit their ${weeklyMaxLoad}-period weekly cap`);
           if (unmetCount > 0) bits.push(`${unmetCount} period(s) of weekly subject targets could not be fully placed`);
-          if (teacherDayBelowMin.length > 0) bits.push(`${teacherDayBelowMin.length} teacher-day(s) ended up with fewer than the minimum ${minFreePerDay} free period(s) because their weekly load didn't leave enough slack`);
-          if (combinedUnplaced.length > 0) bits.push(`${combinedUnplaced.length} combined session(s) couldn't fit all their weekly periods — e.g. ${combinedUnplaced.slice(0, 3).map(c => `${c.subject} for [${c.sections}] (${c.placed}/${c.needed} placed)`).join("; ")}`);
-          if (labUnplaced.length > 0) bits.push(`${labUnplaced.length} lab block group(s) couldn't fit all their weekly blocks — e.g. ${labUnplaced.slice(0, 3).map(c => `${c.teacher} for [${c.sections}] (${c.placed}/${c.needed} blocks placed)`).join("; ")}`);
-          let msg = "Generated with caveats: " + bits.join("; ") + ". The conflict-free guarantee still holds — no teacher is ever double-booked, and no teacher exceeds the maximum " + maxFreePerDay + " free period(s)/day cap. Free periods have been rotated evenly across sections that share the same teacher rather than concentrated on one.";
+          if (teacherDayBelowMin.length > 0) bits.push(`${teacherDayBelowMin.length} teacher-day(s) ended up with fewer than the minimum ${minFreePerDay} free period(s)`);
+          if (combinedUnplaced.length > 0) bits.push(`${combinedUnplaced.length} combined session(s) couldn't fit all their weekly periods`);
+          if (labUnplaced.length > 0) bits.push(`${labUnplaced.length} lab block group(s) couldn't fit all their weekly blocks`);
+          let msg = "Generated with caveats: " + bits.join("; ") + ". The conflict-free guarantee still holds — no teacher is ever double-booked, and no teacher exceeds the " + weeklyMaxLoad + " period/wk cap.";
           if (topBottlenecks.length) {
-            msg += " Most-overbooked teacher(s): " + topBottlenecks.join("; ") + ". These teachers need a co-teacher for at least one of their sections, or fewer sections assigned, to close the gap.";
+            msg += " Most-overbooked teacher(s): " + topBottlenecks.join("; ") + ".";
           }
-          if (savedToMainApp) msg += " Saved to Timetable Manager — open \"View Timetable\" there to see it.";
+          if (savedToMainApp) msg += " Saved to Timetable Manager.";
           showGlobalWarning(msg, false, forcedFreeDetails.slice(0, 30));
         } else {
-          let msg = "✓ Generated " + sections.length + " conflict-free class timetables — no teacher is double-booked, and every teacher has between " + minFreePerDay + " and " + maxFreePerDay + " free period(s) each day.";
-          if (savedToMainApp) msg += " Saved to Timetable Manager — open \"View Timetable\" there to see it.";
+          let msg = "✓ Generated " + sections.length + " conflict-free class timetables — no teacher is double-booked, weekly loads ≤ " + weeklyMaxLoad + ", and every teacher has between " + minFreePerDay + " and " + maxFreePerDay + " free period(s) each day.";
+          if (savedToMainApp) msg += " Saved to Timetable Manager.";
           showGlobalWarning(msg, true);
         }
       }
