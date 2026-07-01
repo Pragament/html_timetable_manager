@@ -1,67 +1,53 @@
 # HTML Timetable Manager
 
-A purely client-side browser application for Principals and Administrators to design, generate, and manage school timetables seamlessly.
+A browser-based timetable management app for school principals and administrators to create, generate, review, and modify class timetables.
 
-## Workflow for the Principal
+## Overview
 
-The application stores all imported setup data securely in your browser's `localStorage`. To set up and generate a timetable from scratch, the Principal or Administrator should follow these exact steps and import the respective files in order:
+This project helps a school manage timetable data from setup to generation using only client-side files and browser storage. It supports class sections, subject master data, teacher master data, teacher-subject mappings, combined classes, fixed periods, and lab blocks.[1][2]
 
-### 1. Setup the Foundation (Master Data)
-Navigate to the **Setup** section in the sidebar to define the core structural data of the school. You will need to import the following three files:
-*   **Step 1.1: Bulk Classes & Sections**
-    *   **File to Import:** `class-sections.csv`
-    *   **Action:** Upload your CSV to establish the grades and sections in your school (e.g., Grade-I-A, Grade-I-B). You can also add them manually.
-*   **Step 1.2: Bulk Subjects**
-    *   **File to Import:** `subjects-code.csv`
-    *   **Action:** Upload your CSV to establish all available subjects and their codes.
-*   **Step 1.3: Teacher List**
-    *   **File to Import:** `teacher-list.csv`
-    *   **Action:** Upload your CSV to register all faculty members with their basic contact details and class teacher assignments.
+The timetable generator is designed to produce a conflict-free timetable by checking teacher clashes, class-slot clashes, fixed slots, lab-slot rules, and per-teacher weekly workload limits.[1][2]
 
-### 2. Configure the Timetable Parameters
-In the **Timetable Configuration** panel under Setup, set your scheduling constraints:
-*   **School Days:** Select the operating days (e.g., Monday to Saturday).
-*   **Periods per Day:** Set how many periods are in a standard day.
-*   **Max Periods Per Teacher:** Determine the maximum workload any individual teacher can be assigned per week.
+## Features
 
-### 3. Define Lab Blocks (Optional)
-If your school has continuous practical/lab sessions that span multiple periods:
-*   **File to Import:** `lab-blocks.csv`
-*   **Action:** Go to the **Lab Blocks** panel in the Setup section and upload the CSV to define which subjects require block periods and how long they should be.
+- Import class sections, subjects, teachers, teacher mappings, lab blocks, and existing timetables.[1][2]
+- Generate timetables using built-in scheduling logic.[1][2]
+- Support fixed periods such as `P1` or `P1-P2`.[1][2]
+- Support combined classes where multiple sections are taught together in the same slot.[1][2]
+- Support lab-style consecutive allocations such as `P1-P2` and `P6-P7` for lab subjects.[3][2]
+- Detect and report unscheduled mappings when all requested periods cannot be placed.[2]
+- View timetable by class, teacher, or subject.[1][2]
+- Modify timetable entries and export data files.[1][2]
 
-### 4. Import Teacher-Subject Mappings (Crucial Step)
-Go to the **Teacher Grade-Section Subject Mapping** panel. This step tells the system who teaches what, where, and how often.
-*   **File to Import:** `teacher-mapping.csv` (or `teacher-mapping-combined.csv` for shared classes)
-*   **Action:** Upload the CSV mapping file. This file contains:
-    *   Which Teacher teaches which Subject to which Grade-Section.
-    *   **Periods Per Week:** How many periods this mapping requires.
-    *   **Fixed Periods:** Specific locked periods (e.g., `1` for P1, `5,6` for P5 and P6).
-    *   **Mode:** Whether the class is Individual (`0`) or Combined (`1`) (where multiple classes share the same teacher simultaneously).
+## Setup workflow
 
-### 5. Save and Generate
-*   Once all data is imported from the CSV files and looks correct in the UI tables, click **Save Changes** at the top right.
-*   Click **Generate Timetable**. The built-in scheduling engine will automatically construct a complete, conflict-free timetable honoring your mappings, fixed periods, lab blocks, and combined classes.
+Follow this order when preparing data:
 
-### 6. Review and Refine
-Navigate to the **View** section to visually inspect the results:
-*   **Teacher View:** Ensure no teacher is double-booked and verify their workloads.
-*   **Class View:** Ensure all periods are filled correctly for every class.
-*   **Subject View:** Track subject distributions across the week.
+1. Import or create class sections.
+2. Import subject codes and names.
+3. Import teacher master data.
+4. Import teacher grade-section subject mappings.
+5. Optionally import lab block rules.
+6. Configure school days, periods per day, and maximum periods per teacher.
+7. Save setup data.
+8. Generate the timetable.[1][2]
 
-*(Optional Alternative)*: If you prefer to generate the timetable externally, you can use the **AI Prompt** tab to copy a prompt to feed into an LLM (like ChatGPT or Claude), and then use **Upload Timetable** to import the generated CSV.
+## Required data files
 
----
+### 1. Class sections
 
-## Required CSV Formats
+CSV columns:
 
-### 1. Class Sections CSV
 ```csv
 Class,Section,Teaching Mode,Combined Group
 Grade-I,A,,
 Grade-I,B,,
 ```
 
-### 2. Subjects CSV
+### 2. Subjects
+
+CSV columns:
+
 ```csv
 Subject Code,Subject Name
 MTH,Maths
@@ -69,40 +55,109 @@ ENG,English
 SCI,Science
 ```
 
-### 3. Teacher List CSV
+### 3. Teacher list
+
+CSV columns:
+
 ```csv
 Teacher ID,Teacher Name,Class Teacher Subject,Class Teacher Grade,Class Teacher Section,Phone,Email
 T001,Indira,MTH,Grade-I,A,9876543210,indira@school.com
-T002,Sai Priya,EVS,Grade-I,B,,
 ```
 
-### 4. Teacher Grade-Section Subject Mapping CSV
+### 4. Teacher mappings
+
+CSV columns:
+
 ```csv
 Teacher ID,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode
 T001,Grade-I-A,MTH,5,,0
-T002,Grade-I-A,EVS,4,1,0
-T003,Grade-V-A;Grade-V-B,PT,2,,1
+T002,Grade-I-A,EVS,4,P1,0
+T003,"Grade-V-A,Grade-V-B",PT,2,,1
 ```
 
----
+### 5. Lab blocks
 
-## Output CSV Format
-If you choose to upload a manually generated timetable or one from an AI, ensure it follows this strict CSV format:
+Use lab block data when a subject must be placed in consecutive periods such as `P1-P2` or `P6-P7`.[1][4]
+
+## Scheduling rules
+
+The generator follows these rules:
+
+- A teacher cannot be assigned to two classes in the same day and period.[1][2]
+- A class cannot receive more than one subject in the same slot.[2]
+- Fixed periods must be respected exactly when provided in mappings.[1][2]
+- Combined classes must share the same day and period for the mapped teacher and subject.[1][2]
+- Lab subjects should be scheduled in consecutive blocks, based on configured lab logic.[3][4][2]
+- Each teacher must stay within the configured weekly maximum load.[1][2]
+- If a mapping cannot be fully scheduled, it is reported as unscheduled instead of being silently converted to a break period.[2]
+
+## Generation flow
+
+The current generation logic should follow this order:
+
+1. Build an empty timetable.
+2. Place fixed tasks first.
+3. Place fixed combined tasks.
+4. Place lab blocks.
+5. Place class-teacher `P1` tasks after lab placement.
+6. Place combined normal tasks.
+7. Place normal tasks.
+8. Retry remaining unscheduled periods in empty teaching slots.
+9. Save the timetable and show any remaining shortages.[2]
+
+This order improves fill rate because the most constrained tasks are scheduled before flexible ones.[2]
+
+## Important implementation notes
+
+- Empty teaching slots should not be displayed as `BREAK` unless they are actual configured break or lunch periods in the timetable structure.[5][6][2]
+- `CSL` should be treated as a lab subject, while `CSC` should remain a normal subject unless explicitly configured otherwise.[3][2]
+- Before generation, the app should validate teacher demand against the configured weekly load limit so impossible datasets are detected early.[3][2]
+- If total subject demand for a teacher exceeds the allowed weekly periods, the timetable cannot be fully filled until the data or config is corrected.[3][2]
+
+## Why unfilled periods happen
+
+Unfilled periods usually happen for one of these reasons:
+
+- Teacher weekly load is too low for the total assigned mappings.[3][2]
+- Too many fixed slots reduce available placement options.[3][2]
+- A combined class or lab block consumes limited shared slots.[1][2]
+- The input data is not feasible with the current number of days, periods, and teachers.[2]
+
+## Recommended validation checks
+
+Before generating a timetable, verify:
+
+- Every class has enough total periods available in the week.
+- Every subject mapping has a valid teacher ID, class, subject, and periods-per-week value.
+- Every fixed period refers to a valid period number.
+- Combined mappings refer to compatible class groups.
+- Teacher total requested periods do not exceed the configured maximum weekly load.[1][2]
+
+## Output
+
+Generated timetable CSV format:
 
 ```csv
 Class-Section,Day,P1,P2,P3,P4,P5,P6,P7,P8
-Grade-I-A,Monday,T001:Indira:MTH,T002:Sai:EVS,,,,,,,
+Grade-I-A,Monday,T001|Indira|MTH,T002|Sai Priya|EVS,,,,,,
 ```
 
-### Cell Separator Rules (Important)
-*   Use this structure strictly: `TeacherID:TeacherName:Subject`
-*   `:` separates TeacherID and TeacherName
-*   `:` separates TeacherName and Subject
-*   `-` separates Class and Section (e.g., `Grade-I-A`)
+Use the format `TeacherID|TeacherName|Subject` in each timetable cell.[1]
 
-## Excel Upload Formats
-Supported Excel formats for uploading existing timetables:
-*   `Standard (Sheet-per-Class)`: One sheet per class, row-wise day timetable.
-*   `STATE TIME TABLE (19.07.2025)`: Teacher-wise matrix with day blocks and period numbers.
+## Storage
 
-Before uploading an Excel file, choose the matching format from the Excel Format dropdown in the Upload section.
+The application stores working data in browser `localStorage`, including timetable data, configuration, teacher data, subject data, class sections, and holidays.[1][2]
+
+## Current limitations
+
+- The app is fully client-side and depends on browser storage.[1][2]
+- If input data is infeasible, some mappings will remain unscheduled unless validation blocks generation first.[2]
+- A strong final repair pass is needed to improve fill quality for difficult datasets.[2]
+
+## Recommended next improvements
+
+- Add a feasibility validator before generation.
+- Sort tasks by difficulty before scheduling.
+- Add swap-based repair logic for remaining unscheduled periods.
+- Add explicit break/lunch configuration separate from teaching slots.
+- Show a detailed generation report with overload reasons per teacher and per class.[2]
