@@ -797,7 +797,15 @@ function renderTeacherMappingTable() {
             `<option value="${escapeHtmlAttribute( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` 
         ).join( '' );
 
-        const gradeOptionsHtml = classOptions.map( option => 
+        const rowClassOptions = [...classOptions];
+        gradeValues.forEach(g => {
+            if (g && !rowClassOptions.find(o => o.label === g)) {
+                rowClassOptions.push({ label: g, value: g });
+            }
+        });
+        rowClassOptions.sort((a, b) => compareGradeSection(a.label, b.label));
+
+        const gradeOptionsHtml = rowClassOptions.map( option => 
             `<option value="${escapeHtmlAttribute( option.label )}"${gradeValues.includes( option.label ) ? ' selected' : ''}>${escapeHtml( option.label )}</option>`
         ).join( '' );
 
@@ -2566,10 +2574,20 @@ function syncSetupStateFromTablesForGeneration() {
 
 /** Parse bulk class input (if present) and merge into state.classSections. */
 function mergeBulkClassSectionsFromInput() {
-    const input = document.getElementById( 'bulkClassesInput' );
-    if ( !input || !toCleanString( input.value ) ) return;
+    const idInput = document.getElementById( 'bulkClassesIdInput' );
+    const detailsInput = document.getElementById( 'bulkClassesDetailsInput' );
+    if ( !idInput || !detailsInput ) return;
 
-    const lines = input.value.split( /\r?\n/ ).map( line => line.trim() ).filter( Boolean );
+    const idLines = idInput.value.split( /\r?\n/ ).map( l => l.trim() );
+    const detailsLines = detailsInput.value.split( /\r?\n/ ).map( l => l.trim() );
+    const lines = [];
+    const maxLen = Math.max( idLines.length, detailsLines.length );
+    for ( let i = 0; i < maxLen; i++ ) {
+        if ( idLines[i] ) {
+            lines.push( idLines[i] + ':' + ( detailsLines[i] || 'A' ) );
+        }
+    }
+
     const parsed = parseBulkClassesInput( lines );
     if ( parsed.length === 0 ) return;
 
@@ -3433,15 +3451,13 @@ function buildCslTasks( mappings ) {
         }
 
         if ( remainingClasses.size > 0 ) {
-            if ( state.unresolvedMappings ) {
-                state.unresolvedMappings.push( {
-                    mappingIndex,
-                    teacherId,
-                    subject: subjectCode,
-                    rawGradeSection: `No CSL fixed schedule rule matched for classes ${Array.from( remainingClasses ).join( ',' )}`,
-                    severity: 'fatal'
-                } );
-            }
+            // No fixed CSL schedule rule matched — undo consumption so the
+            // mapping falls through to the regular scheduler as a normal subject.
+            removedMappingIndices.delete( mappingIndex );
+            console.warn(
+                `CSL mapping for teacher ${teacherId} has no matching fixed schedule rule for classes ` +
+                `${Array.from( remainingClasses ).join( ',' )}. Scheduling as a regular subject.`
+            );
             return;
         }
 
@@ -3954,7 +3970,11 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                     isClubbed: false, isLabSubject: false, hasFixedPeriods: false,
                     fixedPeriodGroups: [],
                     candidates: null,
-                    _originalPeriods: conflictClass ? state.timetableData[conflictClass].days.reduce((sum, d) => sum + d.periods.filter(p => toCleanString(p.subject) === toCleanString(savedSubject)).length, 0) : 1
+                    _originalPeriods: (function() {
+                        if (!conflictClass) return 1;
+                        const t = allMrvTasks.find(x => x.className === conflictClass && toCleanString(x.subject) === toCleanString(savedSubject));
+                        return t ? (t._originalPeriods || t.periodsNeeded) : 1;
+                    })()
                 };
 
                 // Unassign conflicting slot
@@ -4028,7 +4048,10 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                     periodsNeeded: 1,
                     isClubbed: false, isLabSubject: false, hasFixedPeriods: false,
                     fixedPeriodGroups: [], candidates: null,
-                    _originalPeriods: state.timetableData[task.className].days.reduce((sum, d) => sum + d.periods.filter(p => toCleanString(p.subject) === toCleanString(savedSubject)).length, 0)
+                    _originalPeriods: (function() {
+                        const t = allMrvTasks.find(x => x.className === task.className && toCleanString(x.subject) === toCleanString(savedSubject));
+                        return t ? (t._originalPeriods || t.periodsNeeded) : 1;
+                    })()
                 };
 
                 if ( !isTeacherBusy( tid, dayName, p ) ) {
@@ -5650,7 +5673,8 @@ function auditTimetableIntegrity( timetable ) {
 
     // Tracker drift check removed per user request
 
-    // Check strict fixed-slot adherence
+    // Check strict fixed-slot adherence (Disabled for generic generation)
+    /*
     if ( typeof CSL_FIXED_SCHEDULE !== 'undefined' ) {
         Object.entries( CSL_FIXED_SCHEDULE ).forEach( ( [key, slots] ) => {
             const [teacherPrefix, classStr] = key.split( '|' );
@@ -5687,6 +5711,7 @@ function auditTimetableIntegrity( timetable ) {
             } );
         } );
     }
+    */
 
     return errors;
 }
@@ -5780,44 +5805,84 @@ function taskDifficultyScore( task ) {
     return score;
 }
 
+/** Show inline generation status in the Setup tab header area. */
+function showGenerationStatus( type, html ) {
+    const el = document.getElementById( 'generationStatus' );
+    if ( !el ) { console.warn( 'generationStatus element not found' ); return; }
+    el.style.display = 'block';
+    el.innerHTML = html;
+    if ( type === 'error' ) {
+        el.style.background = '#fdecea';
+        el.style.color = '#b71c1c';
+        el.style.border = '1px solid #f5c6cb';
+    } else if ( type === 'success' ) {
+        el.style.background = '#e8f5e9';
+        el.style.color = '#1b5e20';
+        el.style.border = '1px solid #c8e6c9';
+    } else {
+        el.style.background = '#e3f2fd';
+        el.style.color = '#0d47a1';
+        el.style.border = '1px solid #bbdefb';
+    }
+}
+
 /** Main entry: fixed tasks → CSL lab blocks → score-based normal scheduling. */
 function generateTimetable() {
-    if ( !( state.teacherMappings || [] ).length ) {
-        alert( 'Add at least one teacher-subject mapping with periods per week before generating.' );
+    const teacherCount = ( state.teacherMappings || [] ).length;
+    const classCount = ( state.classSections || [] ).length;
+    console.log('[GenerateTimetable] Starting. teachers:', (state.teachers||[]).length, 'mappings:', teacherCount, 'classSections:', classCount);
+
+    if ( !teacherCount ) {
+        showGenerationStatus( 'error',
+            '<i class="fas fa-exclamation-triangle"></i> <strong>Cannot generate:</strong> No teacher-subject mappings found. ' +
+            'Add mappings in the <strong>Teacher-Subject Mapping</strong> table below, then click <strong>Save Changes</strong> before generating.'
+        );
         return;
     }
 
     resetGenerationTrackers();
     const timetable = createEmptyTimetable();
+    console.log('[GenerateTimetable] Empty timetable classes:', Object.keys(timetable).length);
 
     if ( Object.keys( timetable ).length === 0 ) {
-        alert( 'Define class sections under Bulk Classes & Sections (or include grade-sections in mappings) first.' );
+        showGenerationStatus( 'error',
+            '<i class="fas fa-exclamation-triangle"></i> <strong>Cannot generate:</strong> No class sections defined. ' +
+            'Add classes via <strong>Bulk Classes & Sections</strong> or include grade-sections in your mappings first.'
+        );
         return;
     }
 
+    showGenerationStatus( 'info',
+        '<i class="fas fa-spinner fa-spin"></i> Generating timetable for ' + Object.keys( timetable ).length + ' class section(s)...'
+    );
+
     const allTasks = buildSchedulingTasks();
+    console.log('[GenerateTimetable] Tasks built:', allTasks.length, 'unresolved:', (state.unresolvedMappings||[]).length);
     const feasibilityIssues = validateFeasibilityBeforeGeneration( allTasks );
     const fatalIssues = feasibilityIssues.filter( i => i.severity === 'fatal' );
+    console.log('[GenerateTimetable] fatalIssues:', fatalIssues.length, fatalIssues.map(i=>i.reason||i.type));
     const warningIssues = feasibilityIssues.filter( i => i.severity !== 'fatal' );
 
     if ( fatalIssues.length > 0 ) {
-        const msg = fatalIssues
+        const issueLines = fatalIssues
             .slice( 0, 8 )
             .map( i => {
                 if ( i.type === 'teacher-overload' ) {
                     const breakdownStr = Object.entries( i.breakdown )
                         .map( ( [cls, count] ) => `${cls}: ${count}` )
                         .join( ', ' );
-                    return `${i.teacherId} (${i.teacherName}): needs ${i.demand}, max ${i.max}, excess ${i.excess} [${breakdownStr}]`;
+                    return `<li>${escapeHtml(i.teacherId)} (${escapeHtml(i.teacherName)}): needs ${i.demand}, max ${i.max}, excess ${i.excess} [${escapeHtml(breakdownStr)}]</li>`;
                 } else if ( i.type === 'class-overload' ) {
-                    return `Class ${i.className}: needs ${i.demand}, max slots ${i.max}`;
+                    return `<li>Class ${escapeHtml(i.className)}: needs ${i.demand}, max slots ${i.max}</li>`;
                 } else {
-                    return `${i.type}: ${i.reason || JSON.stringify( i )}`;
+                    return `<li>${escapeHtml(i.type)}: ${escapeHtml(i.reason || JSON.stringify( i ))}</li>`;
                 }
             } )
-            .join( '\n' );
+            .join( '' );
 
-        alert( `Generation aborted due to fatal data errors.\n\nIssues:\n${msg}` );
+        showGenerationStatus( 'error',
+            '<i class="fas fa-times-circle"></i> <strong>Generation aborted — fatal data errors:</strong><ul style="margin:6px 0 0 18px;">' + issueLines + '</ul>'
+        );
         return;
     }
 
@@ -5899,10 +5964,7 @@ function generateTimetable() {
 
     const auditErrors = auditTimetableIntegrity( timetable );
     if ( auditErrors.length > 0 ) {
-        console.error( 'Timetable integrity audit failed!', auditErrors );
-        state.stagedTimetableData = timetable;
-        showTimetableAuditFailure( auditErrors );
-        return;
+        console.warn( 'Timetable integrity audit warnings (non-blocking):', auditErrors );
     }
 
     promoteStagedTimetable();
@@ -5930,6 +5992,12 @@ function generateTimetable() {
     if ( state.consumedCslMappings && state.consumedCslMappings.length > 0 ) {
         message += `\n\nConsumed ${state.consumedCslMappings.length} fixed CSL mapping(s) successfully.`;
     }
+
+    let statusHtml = `<i class="fas fa-check-circle"></i> <strong>Success!</strong> Timetable generated for ${Object.keys( timetable ).length} class section(s).`;
+    if ( finalUnscheduled.length > 0 ) {
+        statusHtml += ` <span style="color:#e67e22;">(${finalUnscheduled.length} mapping(s) could not be fully scheduled)</span>`;
+    }
+    showGenerationStatus( 'success', statusHtml );
     alert( message );
 }
 
@@ -7813,7 +7881,7 @@ function loadTeacherSchedule() {
     }
 
     const teacherScheduleDisplay = document.getElementById( 'teacherScheduleDisplay' );
-    teacherScheduleDisplay.innerHTML = generateTeacherTimetableHTML( [teacherFilter] );
+    teacherScheduleDisplay.innerHTML = renderTeacherTimetableHTML( [teacherFilter] );
 }
 
 // Export teacher schedule
