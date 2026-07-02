@@ -489,13 +489,13 @@ function updateSetupSummary() {
     updateQuickAddDropdowns();
 }
 
-function escapeHtml( value ) {
-    return String( value ?? '' )
-        .replace( /&/g, '&amp;' )
-        .replace( /</g, '&lt;' )
-        .replace( />/g, '&gt;' )
-        .replace( /"/g, '&quot;' )
-        .replace( /'/g, '&#039;' );
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function parseCSVRows( csvData ) {
@@ -699,56 +699,65 @@ function findTeacherNameById( teacherId ) {
 
 function renderTeacherMasterTable() {
     const table = document.getElementById( 'teacherMasterTable' );
+    if (!table) return;
+
     const rows = state.teachers || [];
     const classSectionOptions = getClassSectionOptions();
     const baseSubjectOptions = getSubjectOptions(); // array of { code, name }
-    table.innerHTML = `
-                <thead>
-                    <tr><th>Teacher ID</th><th>Teacher Name</th><th>Class Teacher Subject</th><th>Class Teacher Grade/Section</th><th>Phone</th><th>Email</th><th>Action</th></tr>
-                </thead>
-                <tbody>
-                    ${rows.map( ( teacher, index ) => {
+
+    const tbodyHtml = rows.map( ( teacher, index ) => {
         const selectedValue = teacher.classTeacherGrade && teacher.classTeacherSection
-            ? `${escapeHtml( teacher.classTeacherGrade )}|${escapeHtml( teacher.classTeacherSection )}`
+            ? `${teacher.classTeacherGrade}|${teacher.classTeacherSection}`
             : '';
         const subjectValue = teacher.classTeacherSubject || teacher.subjects || '';
 
         // Dynamically ensure the current value is part of the dropdown options
         const rowSubjectOptions = [...baseSubjectOptions];
-        const found = rowSubjectOptions.find( o => o.code === subjectValue );
-        if ( subjectValue && !found ) {
+        if ( subjectValue && !rowSubjectOptions.find( o => o.code === subjectValue ) ) {
             rowSubjectOptions.push( { code: subjectValue, name: `${subjectValue} (Unmapped)` } );
         }
         rowSubjectOptions.sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
 
+        const subjectOptionsHtml = rowSubjectOptions.map( option => 
+            `<option value="${escapeHtmlAttribute( option.code )}"${option.code === subjectValue ? ' selected' : ''}>${escapeHtml( option.code )} - ${escapeHtml( option.name )}</option>`
+        ).join( '' );
+
+        const classSectionOptionsHtml = classSectionOptions.map( option => 
+            `<option value="${escapeHtmlAttribute( option.value )}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml( option.label )}</option>`
+        ).join( '' );
+
         return `
-                        <tr data-index="${index}">
-                            <td><input value="${escapeHtml( teacher.id )}" data-field="id"></td>
-                            <td><input value="${escapeHtml( teacher.name )}" data-field="name"></td>
-                            <td>
-                                <select data-field="classTeacherSubject">
-                                    <option value=""></option>
-                                    ${rowSubjectOptions.map( option => `
-                                        <option value="${escapeHtml( option.code )}"${option.code === subjectValue ? ' selected' : ''}>${escapeHtml( option.code )} - ${escapeHtml( option.name )}</option>
-                                    `).join( '' )}
-                                </select>
-                            </td>
-                            <td>
-                                <select data-field="classTeacherGrade" onchange="syncTeacherGradeSection(this)">
-                                    <option value=""></option>
-                                    ${classSectionOptions.map( option => `
-                                        <option value="${escapeHtml( option.value )}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml( option.label )}</option>
-                                    `).join( '' )}
-                                </select>
-                                <input type="hidden" value="${escapeHtml( teacher.classTeacherSection || '' )}" data-field="classTeacherSection">
-                            </td>
-                            <td><input value="${escapeHtml( teacher.phone )}" data-field="phone"></td>
-                            <td><input value="${escapeHtml( teacher.email )}" data-field="email"></td>
-                            <td><button class="btn btn-danger btn-sm" onclick="deleteTeacherRow(${index})"><i class="fas fa-trash"></i></button></td>
-                        </tr>
-                    `} ).join( '' )}
-                </tbody>
-            `;
+            <tr data-index="${index}">
+                <td><input value="${escapeHtmlAttribute( teacher.id )}" data-field="id"></td>
+                <td><input value="${escapeHtmlAttribute( teacher.name )}" data-field="name"></td>
+                <td>
+                    <select data-field="classTeacherSubject">
+                        <option value=""></option>
+                        ${subjectOptionsHtml}
+                    </select>
+                </td>
+                <td>
+                    <select data-field="classTeacherGrade" onchange="syncTeacherGradeSection(this)">
+                        <option value=""></option>
+                        ${classSectionOptionsHtml}
+                    </select>
+                    <input type="hidden" value="${escapeHtmlAttribute( teacher.classTeacherSection )}" data-field="classTeacherSection">
+                </td>
+                <td><input value="${escapeHtmlAttribute( teacher.phone )}" data-field="phone"></td>
+                <td><input value="${escapeHtmlAttribute( teacher.email )}" data-field="email"></td>
+                <td><button class="btn btn-danger btn-sm" onclick="deleteTeacherRow(${index})"><i class="fas fa-trash"></i></button></td>
+            </tr>
+        `;
+    } ).join( '' );
+
+    table.innerHTML = `
+        <thead>
+            <tr><th>Teacher ID</th><th>Teacher Name</th><th>Class Teacher Subject</th><th>Class Teacher Grade/Section</th><th>Phone</th><th>Email</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+            ${tbodyHtml}
+        </tbody>
+    `;
 
     const searchInput = document.getElementById( 'teacherMappingSearch' );
     if ( searchInput && searchInput.value ) {
@@ -758,6 +767,8 @@ function renderTeacherMasterTable() {
 
 function renderTeacherMappingTable() {
     const table = document.getElementById( 'teacherMappingTable' );
+    if (!table) return;
+
     const rows = state.teacherMappings || [];
 
     // Sort rows alphabetically by teacher ID, then by grade-section
@@ -768,67 +779,82 @@ function renderTeacherMappingTable() {
     } );
 
     const classOptions = getClassSectionOptions();
-    const baseSubjectOptions = getSubjectOptions(); // array of { code, name }
+    const baseSubjectOptions = getSubjectOptions();
     const periodOptions = getPeriodOptions();
-    table.innerHTML = `
-                <thead>
-                    <tr><th>Teacher ID</th><th>Grade-Section</th><th>Subject</th><th>Periods / Week</th><th>Fixed Periods</th><th>Mode</th><th>Action</th></tr>
-                </thead>
-                <tbody>
-                    ${rows.map( ( mapping, index ) => {
-        const gradeValue = mapping.gradeSection ? escapeHtml( mapping.gradeSection ) : '';
+    
+    const tbodyHtml = rows.map( ( mapping, index ) => {
         const gradeValues = mapping.gradeSection ? mapping.gradeSection.split( /[,;]/ ).map( s => s.trim() ) : [];
-        const subjectValue = mapping.subject ? escapeHtml( mapping.subject ) : '';
-        const fixedPeriodsValue = mapping.fixedPeriods ? escapeHtml( mapping.fixedPeriods ) : '';
+        const subjectValue = mapping.subject || '';
         const fixedPeriodsValues = mapping.fixedPeriods ? mapping.fixedPeriods.split( ',' ).map( s => s.trim() ) : [];
 
-        // Dynamically ensure the current value is part of the dropdown options
         const rowSubjectOptions = [...baseSubjectOptions];
-        const found = rowSubjectOptions.find( o => o.code === subjectValue );
-        if ( subjectValue && !found ) {
+        if ( subjectValue && !rowSubjectOptions.find( o => o.code === subjectValue ) ) {
             rowSubjectOptions.push( { code: subjectValue, name: `${subjectValue} (Unmapped)` } );
         }
         rowSubjectOptions.sort( ( a, b ) => safeLocaleCompare( a.code, b.code ) );
 
+        const teacherOptionsHtml = ( state.teachers || [] ).map( t => 
+            `<option value="${escapeHtmlAttribute( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` 
+        ).join( '' );
+
+        const gradeOptionsHtml = classOptions.map( option => 
+            `<option value="${escapeHtmlAttribute( option.label )}"${gradeValues.includes( option.label ) ? ' selected' : ''}>${escapeHtml( option.label )}</option>`
+        ).join( '' );
+
+        const subjectOptionsHtml = rowSubjectOptions.map( option => 
+            `<option value="${escapeHtmlAttribute( option.code )}"${option.code === subjectValue ? ' selected' : ''}>${escapeHtml( option.code )} - ${escapeHtml( option.name )}</option>`
+        ).join( '' );
+
+        const fixedPeriodsOptionsHtml = periodOptions.map( option => 
+            `<option value="${escapeHtmlAttribute( option.value )}"${fixedPeriodsValues.includes( option.value ) ? ' selected' : ''}>${escapeHtml( option.label )}</option>`
+        ).join( '' );
+
         return `
-                        <tr data-index="${index}">
-                            <td><select data-field="teacherId"><option value=""></option><option value="UNASSIGNED"${mapping.teacherId === 'UNASSIGNED' ? ' selected' : ''}>Unassigned</option>${( state.teachers || [] ).map( t => `<option value="${escapeHtml( t.id )}"${t.id === mapping.teacherId ? ' selected' : ''}>${escapeHtml( t.id )} - ${escapeHtml( t.name )}</option>` ).join( '' )}</select></td>
-                            <td>
-                                <select data-field="gradeSection" multiple>
-                                    ${classOptions.map( option => `
-                                        <option value="${escapeHtml( option.label )}"${gradeValues.includes( option.label ) ? ' selected' : ''}>${escapeHtml( option.label )}</option>
-                                    `).join( '' )}
-                                </select>
-                            </td>
-                            <td>
-                                <select data-field="subject">
-                                    <option value=""></option>
-                                    ${rowSubjectOptions.map( option => `
-                                        <option value="${escapeHtml( option.code )}"${option.code === subjectValue ? ' selected' : ''}>${escapeHtml( option.code )} - ${escapeHtml( option.name )}</option>
-                                    `).join( '' )}
-                                </select>
-                            </td>
-                            <td><input type="number" min="0" value="${escapeHtml( mapping.periodsPerWeek )}" data-field="periodsPerWeek"></td>
-                            <td>
-                                <select data-field="fixedPeriods" multiple>
-                                    ${periodOptions.map( option => `
-                                        <option value="${escapeHtml( option.value )}"${fixedPeriodsValues.includes( option.value ) ? ' selected' : ''}>${escapeHtml( option.label )}</option>
-                                    `).join( '' )}
-                                </select>
-                            </td>
-                            <td>
-                                <select data-field="mode">
-                                    <option value=""${!mapping.mode || mapping.mode === '' ? ' selected' : ''}>Auto</option>
-                                    <option value="0"${mapping.mode === '0' || mapping.mode === 'individual' ? ' selected' : ''}>0 - Individual</option>
-                                    <option value="1"${mapping.mode === '1' || mapping.mode === 'combined' ? ' selected' : ''}>1 - Combined</option>
-                                </select>
-                            </td>
-                            
-                            <td><button class="btn btn-danger btn-sm" onclick="deleteMappingRow(${index})"><i class="fas fa-trash"></i></button></td>
-                        </tr>
-                    `} ).join( '' )}
-                </tbody>
-            `;
+            <tr data-index="${index}">
+                <td>
+                    <select data-field="teacherId">
+                        <option value=""></option>
+                        <option value="UNASSIGNED"${mapping.teacherId === 'UNASSIGNED' ? ' selected' : ''}>Unassigned</option>
+                        ${teacherOptionsHtml}
+                    </select>
+                </td>
+                <td>
+                    <select data-field="gradeSection" multiple>
+                        ${gradeOptionsHtml}
+                    </select>
+                </td>
+                <td>
+                    <select data-field="subject">
+                        <option value=""></option>
+                        ${subjectOptionsHtml}
+                    </select>
+                </td>
+                <td><input type="number" min="0" value="${escapeHtmlAttribute( mapping.periodsPerWeek )}" data-field="periodsPerWeek"></td>
+                <td>
+                    <select data-field="fixedPeriods" multiple>
+                        ${fixedPeriodsOptionsHtml}
+                    </select>
+                </td>
+                <td>
+                    <select data-field="mode">
+                        <option value=""${!mapping.mode || mapping.mode === '' ? ' selected' : ''}>Auto</option>
+                        <option value="0"${mapping.mode === '0' || mapping.mode === 'individual' ? ' selected' : ''}>0 - Individual</option>
+                        <option value="1"${mapping.mode === '1' || mapping.mode === 'combined' ? ' selected' : ''}>1 - Combined</option>
+                    </select>
+                </td>
+                <td><button class="btn btn-danger btn-sm" onclick="deleteMappingRow(${index})"><i class="fas fa-trash"></i></button></td>
+            </tr>
+        `;
+    } ).join( '' );
+
+    table.innerHTML = `
+        <thead>
+            <tr><th>Teacher ID</th><th>Grade-Section</th><th>Subject</th><th>Periods / Week</th><th>Fixed Periods</th><th>Mode</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+            ${tbodyHtml}
+        </tbody>
+    `;
 
     // Apply checkbox dropdowns to all multi-selects in the table
     const tableSelects = table.querySelectorAll( 'select[multiple]' );
@@ -1243,24 +1269,24 @@ function renderClassSectionsTable() {
     if ( !table ) return;
     const rows = state.classSections || [];
     table.innerHTML = `
-                <thead><tr><th>Class</th><th>Section</th><th>Mode</th><th>Combined Group</th><th>Action</th></tr></thead>
-                <tbody>
-                    ${rows.map( ( c, i ) => `
-                        <tr data-index="${i}">
-                            <td>${escapeHtml( c.class || '' )}<input type="hidden" data-field="class" value="${escapeHtml( c.class || '' )}"><input type="hidden" data-field="className" value="${escapeHtml( c.className || '' )}"></td>
-                            <td>${escapeHtml( c.section || '' )}<input type="hidden" data-field="section" value="${escapeHtml( c.section || '' )}"></td>
-                            <td>
-                                <select data-field="teachingMode">
-                                    <option value="0"${normalizeTeachingMode( c.teachingMode ) !== 'combined' ? ' selected' : ''}>0 - Individual</option>
-                                    <option value="1"${normalizeTeachingMode( c.teachingMode ) === 'combined' ? ' selected' : ''}>1 - Combined</option>
-                                </select>
-                            </td>
-                            
-                            <td><button class="btn btn-danger btn-sm" onclick="deleteClassSection(${i})"><i class="fas fa-trash"></i></button></td>
-                        </tr>
-                    `).join( '' )}
-                </tbody>
-            `;
+        <thead><tr><th>Class</th><th>Section</th><th>Mode</th><th>Combined Group</th><th>Action</th></tr></thead>
+        <tbody>
+            ${rows.map( ( c, i ) => `
+                <tr data-index="${i}">
+                    <td>${escapeHtml( c.class || '' )}<input type="hidden" data-field="class" value="${escapeHtml( c.class || '' )}"><input type="hidden" data-field="className" value="${escapeHtml( c.className || '' )}"></td>
+                    <td>${escapeHtml( c.section || '' )}<input type="hidden" data-field="section" value="${escapeHtml( c.section || '' )}"></td>
+                    <td>
+                        <select data-field="teachingMode">
+                            <option value="0"${normalizeTeachingMode( c.teachingMode ) !== 'combined' ? ' selected' : ''}>0 - Individual</option>
+                            <option value="1"${normalizeTeachingMode( c.teachingMode ) === 'combined' ? ' selected' : ''}>1 - Combined</option>
+                        </select>
+                    </td>
+                    <td><input type="text" data-field="combinedGroup" value="${escapeHtml( c.combinedGroup || '' )}" placeholder="e.g. Gr11-Sci"></td>
+                    <td><button class="btn btn-danger btn-sm" onclick="deleteClassSection(${i})"><i class="fas fa-trash"></i></button></td>
+                </tr>
+            `).join( '' )}
+        </tbody>
+    `;
 }
 
 function renderSubjectsTable() {
@@ -1317,7 +1343,7 @@ function clearSubjects() {
 function exportSubjectsCSV() {
     const rows = state.subjects || [];
     if ( rows.length === 0 ) { alert( 'No subjects to export.' ); return; }
-    const csv = 'Subject Code,Subject Name\n' + rows.map( s => `${escapeCSVField( s.code )},${escapeCSVField( s.name )}` ).join( '\n' );
+    const csv = 'Subject Code,Subject Name\n' + rows.map( s => `${escapeCsvField( s.code )},${escapeCsvField( s.name )}` ).join( '\n' );
     const blob = new Blob( [csv], { type: 'text/csv' } );
     const url = URL.createObjectURL( blob );
     const a = document.createElement( 'a' );
@@ -1429,7 +1455,7 @@ function exportClassSectionsCSV() {
     const rows = state.classSections || [];
     if ( rows.length === 0 ) { alert( 'No class sections to export.' ); return; }
     const header = 'Class,Section,Teaching Mode,Combined Group\n';
-    const lines = rows.map( r => `${escapeCSVField( r.class || '' )},${escapeCSVField( r.section || '' )},${escapeCSVField( normalizeTeachingMode( r.teachingMode ) === 'combined' ? '1' : '0' )},${escapeCSVField( r.combinedGroupId || '' )}` );
+    const lines = rows.map( r => `${escapeCsvField( r.class || '' )},${escapeCsvField( r.section || '' )},${escapeCsvField( normalizeTeachingMode( r.teachingMode ) === 'combined' ? '1' : '0' )},${escapeCsvField( r.combinedGroupId || '' )}` );
     const csv = header + lines.join( '\n' );
     const blob = new Blob( [csv], { type: 'text/csv' } );
     const url = URL.createObjectURL( blob );
@@ -1711,7 +1737,7 @@ function buildAIPrompt() {
     if ( state.config.aiPromptStyle === 'detailed' ) {
         let csv = 'Teacher ID,Grade-Section,Subject,Periods / Week,Fixed Periods,Mode\n';
         mappings.forEach( mapping => {
-            csv += [mapping.teacherId, mapping.gradeSection, mapping.subject, mapping.periodsPerWeek, mapping.fixedPeriods, mapping.mode].map( escapeCSVField ).join( ',' ) + '\n';
+            csv += [mapping.teacherId, mapping.gradeSection, mapping.subject, mapping.periodsPerWeek, mapping.fixedPeriods, mapping.mode].map( escapeCsvField ).join( ',' ) + '\n';
         } );
         detailedData = `\nTeacher Grade-Section Subject Mapping:\n${csv}\n`;
     } else {
@@ -1748,7 +1774,7 @@ Return CSV now.`;
 function toTeacherCSV( teachers ) {
     let csv = 'Teacher ID,Teacher Name,Class Teacher Subject,Class Teacher Grade,Class Teacher Section,Phone,Email\n';
     teachers.forEach( teacher => {
-        csv += [teacher.id, teacher.name, teacher.classTeacherSubject || teacher.subjects || '', teacher.classTeacherGrade || '', teacher.classTeacherSection || '', teacher.phone, teacher.email].map( escapeCSVField ).join( ',' ) + '\n';
+        csv += [teacher.id, teacher.name, teacher.classTeacherSubject || teacher.subjects || '', teacher.classTeacherGrade || '', teacher.classTeacherSection || '', teacher.phone, teacher.email].map( escapeCsvField ).join( ',' ) + '\n';
     } );
     return csv.trim();
 }
@@ -1757,7 +1783,7 @@ function toMappingCSV( mappings ) {
     let csv = 'Teacher ID,Teacher Name,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode\n';
     mappings.forEach( mapping => {
         const modeVal = mapping.mode === '1' || mapping.mode === 'combined' ? '1' : ( mapping.mode === '0' || mapping.mode === 'individual' ? '0' : '' );
-        csv += [mapping.teacherId, mapping.teacherName, mapping.gradeSection, mapping.subject, mapping.periodsPerWeek, mapping.fixedPeriods || '', modeVal].map( escapeCSVField ).join( ',' ) + '\n';
+        csv += [mapping.teacherId, mapping.teacherName, mapping.gradeSection, mapping.subject, mapping.periodsPerWeek, mapping.fixedPeriods || '', modeVal].map( escapeCsvField ).join( ',' ) + '\n';
     } );
     return csv.trim();
 }
@@ -2319,15 +2345,39 @@ function normalizeSingleClassSectionLabel( cleaned ) {
     return raw;
 }
 
-function getStandardDayOrder() {
-    return ( state.config && state.config.schoolDays && state.config.schoolDays.length > 0 )
+function getStandardDayOrder( className = null ) {
+    const baseDays = ( state.config && state.config.schoolDays && state.config.schoolDays.length > 0 )
         ? state.config.schoolDays
         : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+    if ( className ) {
+        const isTenth = className.includes('Grade-X') || className.includes('Grade-10') || className.includes('Class-10') || className.includes('-10-') || className.startsWith('10-') || className === '10';
+        if ( isTenth && !baseDays.includes('Saturday') ) {
+            return [...baseDays, 'Saturday'];
+        }
+    }
+
+    return baseDays;
 }
 
 function getAllActiveDays() {
     const days = [...getStandardDayOrder()];
     const daySet = new Set( days );
+
+    let hasTenthGrade = false;
+    if (state.classSections && state.classSections.some(c => {
+        const str = typeof c === 'string' ? c : (c.className || '');
+        return str.includes('Grade-X') || str.includes('Grade-10') || str.includes('Class-10') || str.includes('-10-') || str.startsWith('10-') || str === '10';
+    })) {
+        hasTenthGrade = true;
+    } else if (state.timetableData && Object.keys(state.timetableData).some(c => c.includes('Grade-X') || c.includes('Grade-10') || c.includes('Class-10') || c.includes('-10-') || c.startsWith('10-') || c === '10')) {
+        hasTenthGrade = true;
+    }
+    if (hasTenthGrade && !daySet.has('Saturday')) {
+        days.push('Saturday');
+        daySet.add('Saturday');
+    }
+
     if ( typeof CSL_FIXED_SCHEDULE !== 'undefined' ) {
         Object.values( CSL_FIXED_SCHEDULE ).forEach( slots => {
             slots.forEach( slot => {
@@ -2368,7 +2418,7 @@ function isLegacyFlatTimetableEntry( classData ) {
 
 /** Convert legacy flat timetable entries into the canonical app structure. */
 function migrateLegacyFlatTimetableEntry( className, classData ) {
-    const schoolDays = getStandardDayOrder();
+    const schoolDays = getStandardDayOrder( className );
     const periodsPerDay = state.config.periodsPerDay || 8;
 
     return {
@@ -2641,9 +2691,7 @@ function normalizeSubjectCode( subject ) {
     return found ? found.code : cleaned.toUpperCase();
 }
 
-function isCscSubject( subject ) {
-    return normalizeSubjectCode( subject ) === 'CSC';
-}
+
 
 /** Split mapping grade-section cells on comma or semicolon (CSV uses both). */
 function parseGradeSectionParts( gradeSectionStr ) {
@@ -2723,54 +2771,63 @@ function exceedsDailySubjectLimit( className, dayName, subject, additionalPeriod
     return current + additionalPeriods > maxPerDay;
 }
 
-/** Score a candidate slot — higher is better. */
+/**
+ * Phase 3 — Slot Scorer
+ * Score a candidate slot — higher is better.
+ * Formula updated per architecture plan.
+ */
 function scoreCandidateSlot( timetable, task, dayName, periodNumbers, options ) {
     let score = 100;
     const subjectKey = normalizeSubjectCode( task.subject );
-    const schoolDays = getStandardDayOrder();
+    const schoolDays = getStandardDayOrder( task.className );
     const dailyCount = getDailySubjectCount( task.className, dayName, task.subject );
 
-    if ( dailyCount === 0 ) score += 40;
+    // Subject spread: reward days that don't already have this subject
+    if ( dailyCount === 0 )      score += 40;
     else if ( dailyCount === 1 ) score += 10;
-    else score -= 50;
+    else                         score -= 50;
 
-    const dayIndex = schoolDays.indexOf( dayName );
+    // Prefer the day with the fewest occurrences of this subject (even distribution)
     const weeklyCounts = schoolDays.map( day => getDailySubjectCount( task.className, day, task.subject ) );
     const minWeeklyDayCount = Math.min( ...weeklyCounts );
     if ( dailyCount === minWeeklyDayCount ) score += 25;
 
+    // Penalise adjacent same-subject periods (before / after)
     periodNumbers.forEach( periodNumber => {
         const previousSubject = getPreviousPeriodSubject( timetable, task.className, dayName, periodNumber );
-        if ( previousSubject && previousSubject === subjectKey ) {
-            score -= 60;
-        }
+        if ( previousSubject && previousSubject === subjectKey ) score -= 60; // adjacent duplicate — strongly penalise
         const nextPeriod = getClassDayPeriod( timetable, task.className, dayName, periodNumber + 1 );
-        if ( nextPeriod && normalizeSubjectCode( nextPeriod.subject ) === subjectKey ) {
-            score -= 30;
-        }
+        if ( nextPeriod && normalizeSubjectCode( nextPeriod.subject ) === subjectKey ) score -= 30;
     } );
 
+    // Fixed-period preference bonus
     if ( options.preferFixedPeriods ) score += 15;
 
-    const teacherLoad = getTeacherLoad( task.teacherId );
-    score -= teacherLoad * 5;
+    // Phase 3: Preferred early periods (P1–P4)
+    const minPeriod = Math.min( ...periodNumbers );
+    if ( minPeriod <= 4 ) score += 10;
 
-    if ( ['Monday', 'Tuesday', 'Wednesday'].includes( dayName ) ) {
-        score += 10;
-    }
+    // Phase 5: Teacher slack — tight teachers (low slack) get boost to be scheduled first
+    const teacherSlack = options.teacherSlack !== undefined ? options.teacherSlack : 10;
+    if ( teacherSlack < 3 )       score += 20;
+    else if ( teacherSlack < 8 )  score += 10;
+    else                          score -= 5;  // comfortable teacher — deprioritise slightly
 
-    let emptySlotsToday = 0;
+    // Phase 5: Class slack — tight class gets boost
+    const classSlack = options.classSlack !== undefined ? options.classSlack : 10;
+    if ( classSlack < 3 )  score += 15;
+
+    // Phase 3: Prefer slots that leave more future empty slots in this class (preserve flexibility)
     const classData = timetable[task.className];
     if ( classData ) {
         const dayData = classData.days.find( d => d.dayName === dayName );
         if ( dayData ) {
-            dayData.periods.forEach( p => {
-                if ( !p.isLocked && isPeriodSlotEmpty( p ) ) emptySlotsToday++;
-            } );
+            let emptySlotsToday = dayData.periods.filter( p => !p.isLocked && isPeriodSlotEmpty( p ) ).length;
+            score += emptySlotsToday * 2; // more empty slots remaining = more flexible = reward
         }
     }
-    score += ( 8 - emptySlotsToday ) * 2;
 
+    // Lab block preferred positions
     if ( options.isLabBlock && periodNumbers.length === 2 ) {
         const blockKey = periodNumbers.join( '-' );
         if ( blockKey === '1-2' || blockKey === '5-6' ) score += 20;
@@ -2783,7 +2840,7 @@ function scoreCandidateSlot( timetable, task, dayName, periodNumbers, options ) 
 function findBestCandidateSlot( timetable, task, periodNumbers, options, maxTeacherPeriods, labBlockList, searchAllPeriods ) {
     const candidates = [];
     const periodsPerDay = state.config.periodsPerDay || 8;
-    const schoolDays = getStandardDayOrder();
+    const schoolDays = getStandardDayOrder( task.className );
     const slotPatterns = [];
 
     if ( labBlockList && labBlockList.length > 0 ) {
@@ -3077,7 +3134,6 @@ function taskRequiresFixedPeriodOne( task ) {
 
 /** Lock empty P1 slots so later schedulers cannot place other subjects there. */
 function reserveClassP1Slots( timetable, tasks ) {
-    const schoolDays = getStandardDayOrder();
     const reservedClasses = new Set();
 
     tasks.forEach( task => {
@@ -3089,6 +3145,7 @@ function reserveClassP1Slots( timetable, tasks ) {
         if ( reservedClasses.has( task.className ) ) return;
         reservedClasses.add( task.className );
 
+        const schoolDays = getStandardDayOrder( task.className );
         schoolDays.forEach( dayName => {
             const periodEntry = getClassDayPeriod( timetable, task.className, dayName, 1 );
             if ( periodEntry && isPeriodSlotEmpty( periodEntry ) ) {
@@ -3154,7 +3211,7 @@ function canAssignFixedP1Slot( timetable, className, dayName, periodNumber, teac
 
 /** Enumerate day/period combinations, optionally prioritising fixed period numbers. */
 function getSlotCandidates( className, preferredPeriodNumbers ) {
-    const schoolDays = getStandardDayOrder();
+    const schoolDays = getStandardDayOrder( className );
     const periodsPerDay = state.config.periodsPerDay || 8;
     const candidates = [];
     const seen = new Set();
@@ -3619,10 +3676,489 @@ function buildSchedulingTasks( unresolvedOut = [] ) {
     return allTasks;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MRV SCHEDULER ENGINE  (Phases 1–7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Phase 2 — Scheduler Context
+ * Creates a lightweight view object pointing at the existing global trackers.
+ * No data is copied — mutations via assignSlotWithTracking are reflected here.
+ */
+function prepareSchedulerContext( timetable ) {
+    return {
+        timetable,
+        teacherBusy: teacherBusyTracker,          // existing global
+        teacherLoad: teacherAssignments,           // existing global
+        assignmentMap: state.assignmentReverseMap, // existing global
+        teacherSlack: {},   // Phase 5 — populated by computeSlack()
+        classSlack: {},     // Phase 5 — populated by computeSlack()
+        taskCandidates: new Map() // Phase 1 — task → [{dayName, periodNumbers}]
+    };
+}
+
+/**
+ * Phase 1 — Candidate List Pre-computation
+ * For every normal/combined task that has not yet been fully scheduled,
+ * enumerate all (day, period) pairs that are currently legal.
+ * Stores result in ctx.taskCandidates and as task.candidates.
+ */
+function buildCandidateLists( tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled ) return;
+        const candidates = [];
+        const schoolDays = getStandardDayOrder( task.className );
+        const periodsPerDay = state.config.periodsPerDay || 8;
+
+        if ( task.isClubbed && Array.isArray( task.clubbedClasses ) ) {
+            // Combined task: every class must have an empty slot on the same day/period
+            schoolDays.forEach( dayName => {
+                for ( let p = 1; p <= periodsPerDay; p++ ) {
+                    const nums = [p];
+                    const tid = toCleanString( task.teacherId );
+                    if ( isTeacherBusy( tid, dayName, p ) ) continue;
+                    if ( getTeacherLoad( tid ) + 1 > maxTeacherPeriods ) continue;
+                    let allClear = true;
+                    for ( const cls of task.clubbedClasses ) {
+                        const v = validateSlot( timetable, cls, dayName, nums, tid, maxTeacherPeriods );
+                        if ( !v.valid ) { allClear = false; break; }
+                        if ( exceedsDailySubjectLimit( cls, dayName, task.subject, 1, { isLabBlock: false } ) ) { allClear = false; break; }
+                    }
+                    if ( allClear ) candidates.push( { dayName, periodNumbers: nums } );
+                }
+            } );
+        } else {
+            schoolDays.forEach( dayName => {
+                for ( let p = 1; p <= periodsPerDay; p++ ) {
+                    const nums = [p];
+                    const v = validateSlot( timetable, task.className, dayName, nums, task.teacherId, maxTeacherPeriods );
+                    if ( !v.valid ) continue;
+                    if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) continue;
+                    candidates.push( { dayName, periodNumbers: nums } );
+                }
+            } );
+        }
+
+        task.candidates = candidates;
+        ctx.taskCandidates.set( task, candidates );
+    } );
+}
+
+/**
+ * Phase 5 — Slack Calculation
+ * teacherSlack[tid]   = maxPeriods - sum(periodsNeeded for tid)
+ * classSlack[cls]     = totalSlots - sum(periodsNeeded for cls)
+ */
+function computeSlack( tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const periodsPerDay = state.config.periodsPerDay || 8;
+
+    const teacherDemand = {};
+    const classDemand = {};
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled ) return;
+        const tid = toCleanString( task.teacherId );
+        teacherDemand[tid] = ( teacherDemand[tid] || 0 ) + ( task.periodsNeeded || 0 );
+        const classes = ( task.isClubbed && task.clubbedClasses ) ? task.clubbedClasses : [task.className];
+        classes.forEach( cls => {
+            classDemand[cls] = ( classDemand[cls] || 0 ) + ( task.periodsNeeded || 0 );
+        } );
+    } );
+
+    Object.entries( teacherDemand ).forEach( ( [tid, demand] ) => {
+        ctx.teacherSlack[tid] = Math.max( 0, maxTeacherPeriods - demand );
+    } );
+
+    Object.entries( classDemand ).forEach( ( [cls, demand] ) => {
+        const days = getStandardDayOrder( cls );
+        const totalSlots = days.length * periodsPerDay;
+        ctx.classSlack[cls] = Math.max( 0, totalSlots - demand );
+    } );
+}
+
+/**
+ * Phase 1/4 — Incremental Candidate Refresh
+ * After assigning a slot, only re-compute candidates for tasks that share
+ * the same teacher (tid) OR the same class (className) on the affected day.
+ * This keeps the candidate lists accurate without full recomputation.
+ */
+function updateCandidatesAfterAssign( tid, className, dayName, periodNumber, tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled || task.periodsNeeded <= 0 ) return;
+        const taskTid = toCleanString( task.teacherId );
+        const sharesTeacher = ( taskTid === tid );
+        const sharesClass = task.isClubbed
+            ? ( task.clubbedClasses || [] ).includes( className )
+            : task.className === className;
+
+        if ( !sharesTeacher && !sharesClass ) return;
+
+        // Rebuild only entries that involve the affected day/period
+        if ( !task.candidates ) task.candidates = [];
+        task.candidates = task.candidates.filter( c => {
+            if ( c.dayName !== dayName ) return true;
+            if ( !c.periodNumbers.includes( periodNumber ) ) return true;
+
+            // Re-validate this specific slot
+            if ( task.isClubbed && Array.isArray( task.clubbedClasses ) ) {
+                for ( const cls of task.clubbedClasses ) {
+                    const v = validateSlot( timetable, cls, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+                    if ( !v.valid ) return false;
+                }
+                return true;
+            }
+            const v = validateSlot( timetable, task.className, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+            return v.valid;
+        } );
+        ctx.taskCandidates.set( task, task.candidates );
+    } );
+}
+
+/**
+ * Phase 4 — Forward Checking
+ * Before committing an assignment, check: would this assignment reduce
+ * any other unfinished task's candidates to zero?
+ * Returns true if safe to proceed, false if this slot should be skipped.
+ */
+function forwardCheck( tid, className, dayName, periodNumber, allMrvTasks ) {
+    for ( const other of allMrvTasks ) {
+        if ( other.alreadyScheduled || other.periodsNeeded <= 0 ) continue;
+        const otherTid = toCleanString( other.teacherId );
+        const sharesTeacher = ( otherTid === tid );
+        const sharesClass = other.isClubbed
+            ? ( other.clubbedClasses || [] ).includes( className )
+            : other.className === className;
+
+        if ( !sharesTeacher && !sharesClass ) continue;
+
+        // How many current candidates would survive after this assignment?
+        const surviving = ( other.candidates || [] ).filter( c => {
+            if ( sharesTeacher && c.dayName === dayName && c.periodNumbers.includes( periodNumber ) ) return false;
+            if ( sharesClass && !other.isClubbed && c.dayName === dayName && c.periodNumbers.includes( periodNumber ) ) return false;
+            return true;
+        } );
+
+        // If this other task would have 0 candidates but still needs periods → reject
+        if ( surviving.length === 0 && other.periodsNeeded > 0 ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Phase 6 — Recursive Repair (depth-limited DFS)
+ * When a task has no valid candidates, try to move one blocking assignment
+ * away to open a slot. Recurse up to maxDepth levels.
+ * Returns true if repair succeeded and the task was placed.
+ */
+function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
+    if ( depth > maxDepth ) return false;
+    const timetable = ctx.timetable;
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const tid = toCleanString( task.teacherId );
+    const schoolDays = getStandardDayOrder( task.className );
+    const periodsPerDay = state.config.periodsPerDay || 8;
+
+    for ( const dayName of schoolDays ) {
+        for ( let p = 1; p <= periodsPerDay; p++ ) {
+            // Find the period entry for this task's class
+            const cell = getClassDayPeriod( timetable, task.className, dayName, p );
+            if ( !cell || cell.isLocked ) continue;
+
+            if ( isPeriodSlotEmpty( cell ) ) {
+                // Slot is empty but teacher is busy — teacher conflict
+                if ( !isTeacherBusy( tid, dayName, p ) ) continue; // already clean, would have been in candidates
+                // Teacher is busy on this (day, period) for another class — try to find an alternate slot for that other class
+                // Find which class has this teacher blocked
+                let conflictClass = null;
+                let conflictCell = null;
+                for ( const cls of Object.keys( timetable ) ) {
+                    if ( cls === task.className ) continue;
+                    const c = getClassDayPeriod( timetable, cls, dayName, p );
+                    if ( c && toCleanString( c.teacherId ) === tid && !isPeriodSlotEmpty( c ) ) {
+                        conflictClass = cls;
+                        conflictCell = c;
+                        break;
+                    }
+                }
+                if ( !conflictClass ) continue;
+
+                // Save conflict slot state
+                const savedSubject = conflictCell.subject;
+                const savedTeacher = conflictCell.teacherName;
+                const savedId = conflictCell.assignmentId;
+
+                // Build a temporary displaced task to find an alternate home
+                const displacedTask = {
+                    className: conflictClass,
+                    teacherId: tid,
+                    teacherName: savedTeacher,
+                    subject: savedSubject,
+                    periodsNeeded: 1,
+                    isClubbed: false, isLabSubject: false, hasFixedPeriods: false,
+                    fixedPeriodGroups: [],
+                    candidates: null
+                };
+
+                // Unassign conflicting slot
+                unassignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedId );
+
+                // Re-check if task can now go into this slot
+                const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) {
+                    // Find alternate home for displaced task
+                    const altDays = getStandardDayOrder( conflictClass );
+                    let displaced = false;
+                    for ( const altDay of altDays ) {
+                        for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
+                            if ( altDay === dayName && ap === p ) continue;
+                            const av = validateSlot( timetable, conflictClass, altDay, [ap], tid, maxTeacherPeriods );
+                            if ( !av.valid ) continue;
+                            if ( exceedsDailySubjectLimit( conflictClass, altDay, savedSubject, 1, { isLabBlock: false } ) ) continue;
+                            assignSlotWithTracking( timetable, conflictClass, altDay, [ap], tid, savedSubject, savedTeacher, savedId );
+                            displaced = true;
+                            break;
+                        }
+                        if ( displaced ) break;
+                    }
+
+                    if ( displaced ) {
+                        // Place the original task
+                        const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                        if ( ok ) {
+                            updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                            return true;
+                        }
+                    }
+
+                    // Repair of displaced failed — recurse deeper
+                    if ( depth < maxDepth ) {
+                        displacedTask.candidates = null;
+                        buildCandidateLists( [displacedTask], ctx );
+                        const deeper = recursiveRepair( displacedTask, allMrvTasks, ctx, depth + 1, maxDepth );
+                        if ( deeper ) {
+                            const ok2 = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            if ( ok2 ) {
+                                updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // Restore conflict slot (repair failed)
+                assignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedTeacher, savedId );
+
+            } else {
+                // Slot is occupied by someone else — teacher is free but class slot is full
+                const occupantTid = toCleanString( cell.teacherId );
+                if ( occupantTid === tid ) continue; // same teacher, different block — not a repairable conflict here
+                const savedSubject = cell.subject;
+                const savedName = cell.teacherName;
+                const savedId = cell.assignmentId;
+
+                if ( !isTeacherBusy( tid, dayName, p ) ) {
+                    // Teacher IS free but class slot is occupied — evict occupant
+                    unassignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedId );
+
+                    const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                    if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) {
+                        // Find alternate home for evicted occupant
+                        const altDays = getStandardDayOrder( task.className );
+                        let evicted = false;
+                        for ( const altDay of altDays ) {
+                            for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
+                                if ( altDay === dayName && ap === p ) continue;
+                                const av = validateSlot( timetable, task.className, altDay, [ap], occupantTid, maxTeacherPeriods );
+                                if ( !av.valid ) continue;
+                                if ( exceedsDailySubjectLimit( task.className, altDay, savedSubject, 1, { isLabBlock: false } ) ) continue;
+                                assignSlotWithTracking( timetable, task.className, altDay, [ap], occupantTid, savedSubject, savedName, savedId );
+                                evicted = true;
+                                break;
+                            }
+                            if ( evicted ) break;
+                        }
+
+                        if ( evicted ) {
+                            const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            if ( ok ) {
+                                updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                                return true;
+                            }
+                        }
+                    }
+                    // Restore evicted slot
+                    assignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedName, savedId );
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Phase 2 — MRV Scheduler Main Loop
+ * Schedules all normal + combined tasks using:
+ *   1. Dynamic MRV ordering (fewest candidates first)
+ *   2. Forward checking before each assignment
+ *   3. Candidate list update after each assignment
+ *   4. Recursive repair when no candidates remain
+ *
+ * Fixed/CSL/Lab tasks must already be scheduled before calling this.
+ */
+function runMRVScheduler( tasks, ctx, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+    const REPAIR_DEPTH = 3;
+
+    // Filter to only tasks this scheduler handles (normal + combined, not fixed/lab/csl)
+    const mrvTasks = tasks.filter( t =>
+        !t.alreadyScheduled &&
+        t.taskType !== 'fixed-csl' &&
+        t.taskType !== 'lab' &&
+        t.taskType !== 'fixed' &&
+        t.taskType !== 'fixed-combined'
+    );
+
+    // Phase 1: Build initial candidate lists
+    buildCandidateLists( mrvTasks, ctx );
+
+    // Phase 5: Compute slack
+    computeSlack( mrvTasks, ctx );
+
+    let maxIterations = mrvTasks.reduce( ( s, t ) => s + ( t.periodsNeeded || 0 ), 0 ) * 3;
+    let iterations = 0;
+
+    while ( iterations++ < maxIterations ) {
+        // Find tasks still needing periods
+        const pending = mrvTasks.filter( t => ( t.periodsNeeded || 0 ) > 0 && !t.alreadyScheduled );
+        if ( pending.length === 0 ) break;
+
+        // MRV sort: fewest candidates first, with slack as tiebreaker
+        pending.sort( ( a, b ) => {
+            const aCandCount = ( a.candidates || [] ).length;
+            const bCandCount = ( b.candidates || [] ).length;
+            if ( aCandCount !== bCandCount ) return aCandCount - bCandCount;
+            // Tiebreak: lab/combined/fixed bonus, then teacher slack (tight teacher first)
+            return taskDifficultyScore( b ) - taskDifficultyScore( a );
+        } );
+
+        const task = pending[0];
+        const tid = toCleanString( task.teacherId );
+        let placed = false;
+
+        // Score all candidates and try in order (Phase 3)
+        const scoredCandidates = ( task.candidates || [] )
+            .map( c => ( {
+                ...c,
+                score: scoreCandidateSlot( timetable, task, c.dayName, c.periodNumbers, {
+                    preferFixedPeriods: false,
+                    isLabBlock: task.isLabSubject,
+                    teacherSlack: ctx.teacherSlack[tid] || 0,
+                    classSlack: ctx.classSlack[task.className] || 0
+                } )
+            } ) )
+            .sort( ( a, b ) => b.score - a.score );
+
+        for ( const candidate of scoredCandidates ) {
+            const { dayName, periodNumbers } = candidate;
+
+            // Phase 4: Forward check
+            const safe = forwardCheck( tid, task.className, dayName, periodNumbers[0], mrvTasks );
+            if ( !safe ) continue;
+
+            // Validate once more (state may have changed since candidate was built)
+            const v = validateSlot( timetable, task.className, dayName, periodNumbers, tid, maxTeacherPeriods );
+            if ( !v.valid ) continue;
+            if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject } ) ) continue;
+
+            // Check locked/break cells for combined tasks
+            if ( task.isClubbed && task.clubbedClasses ) {
+                const blockHasLocked = periodNumbers.some( pn =>
+                    ( task.clubbedClasses || [] ).some( cls => {
+                        const pe = getClassDayPeriod( timetable, cls, dayName, pn );
+                        return pe && pe.isLocked;
+                    } )
+                );
+                if ( blockHasLocked ) continue;
+
+                const assignmentId = `mrv-c-${tid}-${dayName}-${periodNumbers[0]}`;
+                let allOk = true;
+                for ( const cls of task.clubbedClasses ) {
+                    const ok = assignSlotWithTracking( timetable, cls, dayName, periodNumbers, tid, task.subject, task.teacherName, assignmentId );
+                    if ( !ok ) { allOk = false; break; }
+                }
+                if ( allOk ) {
+                    task.periodsNeeded -= 1;
+                    if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+                    updateCandidatesAfterAssign( tid, task.className, dayName, periodNumbers[0], mrvTasks, ctx );
+                    placed = true;
+                    break;
+                }
+            } else {
+                const ok = assignSlotWithTracking( timetable, task.className, dayName, periodNumbers, tid, task.subject, task.teacherName );
+                if ( ok ) {
+                    task.periodsNeeded -= 1;
+                    if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+                    updateCandidatesAfterAssign( tid, task.className, dayName, periodNumbers[0], mrvTasks, ctx );
+                    placed = true;
+                    break;
+                }
+            }
+        }
+
+        if ( !placed ) {
+            // Phase 6: Recursive repair
+            const repaired = recursiveRepair( task, mrvTasks, ctx, 0, REPAIR_DEPTH );
+            if ( repaired ) {
+                task.periodsNeeded -= 1;
+                if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+            } else {
+                // Phase 7: Structured diagnostics
+                const blockedSlots = [];
+                const schoolDays = getStandardDayOrder( task.className );
+                const periodsPerDay = state.config.periodsPerDay || 8;
+                schoolDays.forEach( dayName => {
+                    for ( let p = 1; p <= periodsPerDay; p++ ) {
+                        const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                        if ( !v.valid ) blockedSlots.push( `${dayName}-P${p}: ${v.reason}` );
+                    }
+                } );
+
+                unscheduled.push( {
+                    className: task.isClubbed ? ( task.clubbedClasses || [] ).join( ';' ) : task.className,
+                    teacherId: tid,
+                    teacherName: task.teacherName,
+                    subject: task.subject,
+                    periodsNeeded: task.periodsNeeded,
+                    periodsScheduled: ( task._originalPeriods || task.periodsNeeded ) - task.periodsNeeded,
+                    periodsUnscheduled: task.periodsNeeded,
+                    reason: 'No valid candidate slots after MRV + forward checking + repair',
+                    candidateCount: ( task.candidates || [] ).length,
+                    blockedSlots: blockedSlots.slice( 0, 10 ),
+                    diagnostics: blockedSlots.slice( 0, 10 )
+                } );
+                task.alreadyScheduled = true; // prevent infinite loop
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END MRV ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
 
 function findBestClubbedCandidateSlot( timetable, task, maxTeacherPeriods, labBlockList ) {
     const candidates = [];
-    const schoolDays = getStandardDayOrder();
+    const schoolDays = getStandardDayOrder( task.className );
     const slotPatterns = [];
 
     if ( labBlockList && labBlockList.length > 0 ) {
@@ -4014,9 +4550,8 @@ function scheduleLabBlock( timetable, task, unscheduled ) {
 
 function scheduleClassTeacherP1AfterLabs( timetable, tasks, unscheduled ) {
     const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    const schoolDays = getStandardDayOrder();
-
     tasks.forEach( task => {
+        const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
         if ( !isClassTeacherP1Task( task ) ) return;
         if ( task.isClubbed ) return;
@@ -4064,9 +4599,8 @@ function scheduleClassTeacherP1AfterLabs( timetable, tasks, unscheduled ) {
 /** Schedule all fixed-period mappings first (class-teacher P1 slots, etc.). */
 function scheduleFixedTasks( timetable, tasks, deferredTasks, unscheduled ) {
     const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    const schoolDays = getStandardDayOrder();
-
     tasks.forEach( task => {
+        const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
         console.log( 'Scheduling fixed task', task );
 
@@ -4184,9 +4718,8 @@ function scheduleFixedTasks( timetable, tasks, deferredTasks, unscheduled ) {
 /** Schedule fixed-period tasks that are also combined classes. */
 function scheduleFixedCombinedTasks( timetable, tasks, deferredTasks, unscheduled ) {
     const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    const schoolDays = getStandardDayOrder();
-
     tasks.forEach( task => {
+        const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
         console.log( "Scheduling fixed combined task:", task );
 
@@ -4487,7 +5020,7 @@ function trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContex
     const classData = timetable[retryTask.className];
     if ( !classData || !Array.isArray( classData.days ) ) return false;
 
-    const validDays = new Set( getStandardDayOrder() );
+    const validDays = new Set( getAllActiveDays() );
     const daysToEvaluate = classData.days.filter( d => validDays.has( d.dayName ) );
 
     // Strategy 1: Find an occupied slot in this class where retryTask's teacher is free.
@@ -4787,11 +5320,11 @@ function findBestCandidateForSingleCell(timetable, className, dayName, period, t
 }
 
 function fillAllEmptyPeriods( timetable, remainingTasks ) {
-    const days = getStandardDayOrder();
     const periodsPerDay = state.config.periodsPerDay || 8;
 
     for ( const className of Object.keys( timetable ) ) {
-        for ( const dayName of days ) {
+        const classDays = getStandardDayOrder( className );
+        for ( const dayName of classDays ) {
             for ( let p = 1; p <= periodsPerDay; p++ ) {
                 const cell = getClassDayPeriod( timetable, className, dayName, p );
                 if ( !cell || cell.isLocked || !isPeriodSlotEmpty( cell ) ) continue;
@@ -4826,7 +5359,7 @@ function fillAllEmptyPeriods( timetable, remainingTasks ) {
         }
     }
 
-    return remainingTasks;
+    return remainingTasks.filter( t => t.periodsUnscheduled > 0 );
 }
 
 function showTimetableAuditFailure(auditErrors) {
@@ -5026,20 +5559,34 @@ function validateFeasibilityBeforeGeneration( allTasks ) {
     return issues;
 }
 
+/**
+ * Task difficulty score — used as tiebreaker in MRV sort and as primary sort
+ * for the legacy fixed/lab bucket ordering.
+ * Phase 3/5: candidate count dominates when available.
+ */
 function taskDifficultyScore( task ) {
     let score = 0;
+
+    // Dominant term: inverse of remaining candidate count (MRV core)
+    const candCount = ( task.candidates || [] ).length;
+    if ( candCount > 0 ) {
+        score += 10000 / candCount;
+    } else if ( candCount === 0 && !task.alreadyScheduled ) {
+        score += 20000; // zero candidates — schedule immediately or mark failed
+    }
+
+    // Structural bonuses (tiebreakers)
     if ( task.hasFixedPeriods ) score += 1000;
-    if ( task.isLabSubject ) score += 800;
-    if ( task.isClubbed ) score += 600;
+    if ( task.isLabSubject )    score += 800;
+    if ( task.isClubbed )       score += 600;
     score += ( task.fixedPeriodGroups?.length || 0 ) * 100;
     score += Number( task.periodsNeeded || 0 ) * 20;
-
     score += ( task.teacherTaskCount || 0 ) * 10;
 
     return score;
 }
 
-/** Main entry: fixed tasks → CSC lab blocks → score-based normal scheduling. */
+/** Main entry: fixed tasks → CSL lab blocks → score-based normal scheduling. */
 function generateTimetable() {
     if ( !( state.teacherMappings || [] ).length ) {
         alert( 'Add at least one teacher-subject mapping with periods per week before generating.' );
@@ -5101,10 +5648,12 @@ function generateTimetable() {
         if ( buckets[task.taskType] ) buckets[task.taskType].push( task );
     } );
 
+    // Legacy sort for fixed/lab/CSL buckets (candidate count not yet built)
     Object.values( buckets ).forEach( bucket => {
         bucket.sort( ( a, b ) => taskDifficultyScore( b ) - taskDifficultyScore( a ) );
     } );
 
+    // ── PHASE A: Fixed/CSL/Lab (unchanged legacy scheduling) ──────────────────
     scheduleFixedCslLabs( timetable, buckets['fixed-csl'], unscheduled );
 
     reserveClassP1Slots( timetable, allTasks.filter( t => t.hasFixedPeriods && taskRequiresFixedPeriodOne( t ) ) );
@@ -5117,23 +5666,27 @@ function generateTimetable() {
 
     scheduleFixedCombinedTasks( timetable, buckets['fixed-combined'], deferredTasks, unscheduled );
 
-    buckets['combined'].forEach( task => {
-        if ( !task.alreadyScheduled ) scheduleCombinedTask( timetable, task, unscheduled );
-    } );
-
     const classTeacherP1Tasks = deferredTasks.filter( task => isClassTeacherP1Task( task ) );
-    const otherDeferredTasks = deferredTasks.filter( task => !isClassTeacherP1Task( task ) );
-
+    const otherDeferredTasks  = deferredTasks.filter( task => !isClassTeacherP1Task( task ) );
     scheduleClassTeacherP1AfterLabs( timetable, classTeacherP1Tasks, unscheduled );
 
-    [...buckets['normal'], ...otherDeferredTasks.filter( task => !task.isLabSubject )]
-        .forEach( task => {
-            if ( !task.alreadyScheduled ) scheduleNormalTask( timetable, task, unscheduled );
-        } );
+    // ── PHASE B: MRV Scheduler (normal + combined + deferred normal) ──────────
+    const ctx = prepareSchedulerContext( timetable );
 
-    const unscheduledAfterMain = [...unscheduled];
-    const retryUnscheduled = fillRemainingEmptyTeachingSlots( timetable, unscheduledAfterMain );
-    let finalUnscheduled = fillAllEmptyPeriods( timetable, retryUnscheduled );
+    // Stamp original periods needed for diagnostics
+    allTasks.forEach( t => { t._originalPeriods = t.periodsNeeded; } );
+
+    // Collect all tasks the MRV scheduler will handle
+    const mrvInputTasks = [
+        ...buckets['combined'],
+        ...buckets['normal'],
+        ...otherDeferredTasks.filter( t => !t.isLabSubject )
+    ];
+
+    runMRVScheduler( mrvInputTasks, ctx, unscheduled );
+
+    // ── PHASE C: Fill remaining empty slots (last resort) ─────────────────────
+    let finalUnscheduled = fillAllEmptyPeriods( timetable, unscheduled );
     finalUnscheduled = finalUnscheduled.filter( t => t.periodsUnscheduled > 0 );
 
     saveGeneratedTimetable( timetable, finalUnscheduled );
@@ -5872,12 +6425,8 @@ function normalizeFixedPeriods( fp ) {
     } ).filter( Boolean ).join( ',' );
 }
 
-function escapeHtmlAttribute( value ) {
-    return String( value )
-        .replace( /&/g, '&amp;' )
-        .replace( /"/g, '&quot;' )
-        .replace( /</g, '&lt;' )
-        .replace( />/g, '&gt;' );
+function escapeHtmlAttribute(value) {
+  return escapeHtml(value);
 }
 
 function getUniqueSubjectMap() {
@@ -6083,35 +6632,40 @@ function updateTimetableSummary() {
 function updateClassFilters() {
     if ( !state.timetableData ) return;
 
-    // Combine classes from loaded timetable data and generated classSections
+    // 1. Collect class names
     const classSet = new Set();
-    if ( state.timetableData ) Object.keys( state.timetableData ).forEach( c => classSet.add( c ) );
+    Object.keys( state.timetableData ).forEach( c => classSet.add( c ) );
     ( state.classSections || [] ).forEach( c => {
         if ( !c ) return;
         classSet.add( c.className || ( typeof c === 'string' ? c : `${c.class || ''}-${c.section || ''}` ) );
     } );
     const classes = Array.from( classSet ).sort( ( a, b ) => compareGradeSection( a, b ) );
 
-    // Update class filter in View Timetable
+    // 2. Populate classFilter, modifyClassFilter, and teacherScheduleFilter
     const classFilter = document.getElementById( 'classFilter' );
+    const modifyClassFilter = document.getElementById( 'modifyClassFilter' );
+    const teacherScheduleFilter = document.getElementById( 'teacherScheduleFilter' );
+    
     const selectedClasses = getMultiSelectValues( 'classFilter' );
-    classFilter.innerHTML = '';
-    classes.forEach( className => {
+
+    classFilter.innerHTML = classes.map( className => {
         const isSelected = selectedClasses.includes( className ) ? ' selected' : '';
-        classFilter.innerHTML += `<option value="${className}"${isSelected}>${className}</option>`;
-    } );
+        return `<option value="${escapeHtmlAttribute(className)}"${isSelected}>${escapeHtml(className)}</option>`;
+    } ).join( '' );
+    
     if ( selectedClasses.length === 0 ) {
         classFilter.selectedIndex = -1;
     }
 
-    // Update class filter in Modify Timetable
-    const modifyClassFilter = document.getElementById( 'modifyClassFilter' );
-    modifyClassFilter.innerHTML = '<option value="">Select Class</option>';
-    classes.forEach( className => {
-        modifyClassFilter.innerHTML += `<option value="${className}">${className}</option>`;
-    } );
+    modifyClassFilter.innerHTML = '<option value="">Select Class</option>' + classes.map( className => 
+        `<option value="${escapeHtmlAttribute(className)}">${escapeHtml(className)}</option>`
+    ).join( '' );
 
-    // Update teacher filter from valid timetable entries only
+    // Wait, the user grouped teacherScheduleFilter with classFilter! Are they sure they meant classes for teacherScheduleFilter?
+    // In the previous version, teacherScheduleFilter was populated with teachers. I'll populate it with teachers, but keep it in the same logical block if needed.
+    // Let's populate teacherScheduleFilter with teachers as it was before, otherwise it breaks its purpose.
+
+    // 3. Populate teacherFilter and subjectFilter (and teacherScheduleFilter with teachers)
     const teachers = new Set();
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
@@ -6124,41 +6678,36 @@ function updateClassFilters() {
             } );
         }
     } );
-    const sortedTeachers = Array.from( teachers )
-        .sort( ( a, b ) => safeLocaleCompare( a, b ) );
+    const sortedTeachers = Array.from( teachers ).sort( ( a, b ) => safeLocaleCompare( a, b ) );
 
     const teacherFilter = document.getElementById( 'teacherFilter' );
     const selectedTeachers = getMultiSelectValues( 'teacherFilter' );
-    teacherFilter.innerHTML = '';
-    sortedTeachers.forEach( teacher => {
+    teacherFilter.innerHTML = sortedTeachers.map( teacher => {
         const isSelected = selectedTeachers.includes( teacher ) ? ' selected' : '';
-        teacherFilter.innerHTML += `<option value="${teacher}"${isSelected}>${teacher}</option>`;
-    } );
+        return `<option value="${escapeHtmlAttribute(teacher)}"${isSelected}>${escapeHtml(teacher)}</option>`;
+    } ).join( '' );
     if ( selectedTeachers.length === 0 ) {
         teacherFilter.selectedIndex = -1;
     }
 
-    const teacherScheduleFilter = document.getElementById( 'teacherScheduleFilter' );
-    teacherScheduleFilter.innerHTML = '<option value="">Select Teacher</option>';
-    sortedTeachers.forEach( teacher => {
-        teacherScheduleFilter.innerHTML += `<option value="${teacher}">${teacher}</option>`;
-    } );
+    teacherScheduleFilter.innerHTML = '<option value="">Select Teacher</option>' + sortedTeachers.map( teacher => 
+        `<option value="${escapeHtmlAttribute(teacher)}">${escapeHtml(teacher)}</option>`
+    ).join( '' );
 
     const subjectFilter = document.getElementById( 'subjectFilter' );
     const selectedSubjects = getMultiSelectValues( 'subjectFilter' );
-    subjectFilter.innerHTML = '';
-
-    const uniqueSubjects = Array.from( getUniqueSubjectMap().entries() )
-        .sort( ( a, b ) => safeLocaleCompare( a[1], b[1] ) );
-
-    uniqueSubjects.forEach( ( [subjectKey, subjectLabel] ) => {
+    const uniqueSubjects = Array.from( getUniqueSubjectMap().entries() ).sort( ( a, b ) => safeLocaleCompare( a[1], b[1] ) );
+    
+    subjectFilter.innerHTML = uniqueSubjects.map( ( [subjectKey, subjectLabel] ) => {
         const isSelected = selectedSubjects.includes( subjectKey ) ? ' selected' : '';
-        subjectFilter.innerHTML += `<option value="${subjectKey}"${isSelected}>${subjectLabel}</option>`;
-    } );
+        return `<option value="${escapeHtmlAttribute(subjectKey)}"${isSelected}>${escapeHtml(subjectLabel)}</option>`;
+    } ).join( '' );
+    
     if ( selectedSubjects.length === 0 ) {
         subjectFilter.selectedIndex = -1;
     }
 
+    // 4. Call createCheckboxDropdown() afterward
     createCheckboxDropdown( 'classFilter', 'Select Classes' );
     createCheckboxDropdown( 'teacherFilter', 'Select Teachers' );
     createCheckboxDropdown( 'subjectFilter', 'Select Subjects' );
@@ -6168,52 +6717,56 @@ function updateClassFilters() {
 function renderTimetable() {
     const timetableDisplay = document.getElementById( 'timetableDisplay' );
 
-    if ( !state.timetableData ) {
+    if ( !state.timetableData || Object.keys(state.timetableData).length === 0 ) {
         timetableDisplay.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-calendar-alt"></i>
-                        <h3>No Timetable Loaded</h3>
-                        <p>Upload a timetable using the "Upload Timetable" tab to view it here.</p>
-                        <button class="btn btn-primary" id="goToUploadBtn">
-                            <i class="fas fa-file-upload"></i> Go to Upload
-                        </button>
-                    </div>
-                `;
-        document.getElementById( 'goToUploadBtn' ).addEventListener( 'click', function () {
-            document.querySelector( '.tab[data-target="upload-timetable-section"]' ).click();
+            <div class="empty-state">
+                <i class="fas fa-calendar-alt"></i>
+                <h3>No Timetable Loaded</h3>
+                <p>Upload a timetable using the "Upload Timetable" tab to view it here.</p>
+                <button class="btn btn-primary" id="goToUploadBtn">
+                    <i class="fas fa-file-upload"></i> Go to Upload
+                </button>
+            </div>
+        `;
+        document.getElementById( 'goToUploadBtn' )?.addEventListener( 'click', () => {
+            document.querySelector( '.tab[data-target="upload-timetable-section"]' )?.click();
         } );
         return;
     }
 
-    // Get filter values
-    const classFilters = getMultiSelectValues( 'classFilter' );
-    const teacherFilters = getMultiSelectValues( 'teacherFilter' );
-    const subjectFilters = getMultiSelectValues( 'subjectFilter' );
-
     let html = '';
 
-    if ( state.currentView === 'class' ) {
-        // Show class-wise timetable
-        const classesToShow = classFilters.length > 0 ? classFilters : Object.keys( state.timetableData );
-
-        classesToShow.forEach( className => {
-            const classData = state.timetableData[className];
-            if ( !isValidTimetableClassData( classData ) ) return;
-
-            html += `<h3 style="margin: 20px 0 10px 15px;">${className}</h3>`;
-            html += generateTimetableHTML( classData );
-        } );
-    } else if ( state.currentView === 'teacher' ) {
-        // Show teacher-wise timetable
-        html = generateTeacherTimetableHTML( teacherFilters );
-    } else if ( state.currentView === 'subject' ) {
-        // Show subject-wise timetable
-        html = generateSubjectTimetableHTML( subjectFilters );
+    switch ( state.currentView ) {
+        case 'class':
+            const classFilters = getMultiSelectValues( 'classFilter' );
+            const classesToShow = classFilters.length > 0 ? classFilters : Object.keys( state.timetableData );
+            html = classesToShow.map( className => {
+                const classData = state.timetableData[className];
+                if ( !isValidTimetableClassData( classData ) ) return '';
+                return `
+                    <h3 style="margin: 20px 0 10px 15px;">${escapeHtml(className)}</h3>
+                    ${generateTimetableHTML( classData )}
+                `;
+            }).join('');
+            break;
+            
+        case 'teacher':
+            const teacherFilters = getMultiSelectValues( 'teacherFilter' );
+            html = renderTeacherTimetableHTML( teacherFilters );
+            break;
+            
+        case 'subject':
+            const subjectFilters = getMultiSelectValues( 'subjectFilter' );
+            html = renderSubjectTimetableHTML( subjectFilters );
+            break;
+            
+        default:
+            html = '<div class="empty-state"><p>Please select a valid view mode.</p></div>';
+            break;
     }
 
     timetableDisplay.innerHTML = html;
     
-    // Add click listeners for any edit icons rendered in the timetable
     if ( typeof addEditListeners === 'function' ) {
         addEditListeners();
     }
@@ -6289,19 +6842,19 @@ function generateTimetableHTML( classData ) {
                 let cellClassExtension = '';
 
                 if ( isRealBreakPeriod( period ) ) {
-                    subjectHtmlText = '<div class="period-subject">BREAK</div>';
-                    teacherHtmlText = '<div class="period-teacher">No Teacher</div>';
+                    subjectHtmlText = `<div class="period-subject">BREAK</div>`;
+                    teacherHtmlText = `<div class="period-teacher">No Teacher</div>`;
                     cellClassExtension = 'break-cell';
                 } else if ( !hasSubject && !hasTeacher ) {
-                    subjectHtmlText = '<div class="period-subject">UNFILLED</div>';
-                    teacherHtmlText = '<div class="period-teacher">No Teacher</div>';
+                    subjectHtmlText = `<div class="period-subject">UNFILLED</div>`;
+                    teacherHtmlText = `<div class="period-teacher">No Teacher</div>`;
                 } else {
                     subjectHtmlText = hasSubject
                         ? `<div class="period-subject">${period.subject}</div>`
-                        : '<div class="period-subject subject-missing" title="No subject assigned" aria-label="No subject assigned">🟡</div>';
+                        : `<div class="period-subject subject-missing" title="No subject assigned" aria-label="No subject assigned">🟡</div>`;
                     teacherHtmlText = hasTeacher
                         ? `<div class="period-teacher">${period.teacherName}</div>`
-                        : '<div class="period-teacher">No Teacher</div>';
+                        : `<div class="period-teacher">No Teacher</div>`;
                 }
 
                 html += `
@@ -6332,20 +6885,17 @@ function generateTimetableHTML( classData ) {
 }
 
 // Generate teacher timetable HTML
-function generateTeacherTimetableHTML( teacherFilters ) {
+function renderTeacherTimetableHTML( teacherFilters ) {
     if ( !teacherFilters || teacherFilters.length === 0 ) {
         return '<div class="empty-state"><p>Please select one or more teachers to view their schedules.</p></div>';
     }
 
     if ( !state.timetableData ) return '<p>No timetable data.</p>';
 
-    let html = '';
-    teacherFilters.forEach( teacherFilter => {
+    return teacherFilters.map( teacherFilter => {
         const dayOrder = getAllActiveDays();
         const teacherGrid = {};
-        dayOrder.forEach( day => {
-            teacherGrid[day] = {};
-        } );
+        dayOrder.forEach( day => { teacherGrid[day] = {}; } );
 
         let maxPeriods = 0;
         let hasAnyEntry = false;
@@ -6369,62 +6919,55 @@ function generateTeacherTimetableHTML( teacherFilters ) {
         } );
 
         if ( !hasAnyEntry ) {
-            html += `<div class="empty-state"><p>No schedule found for teacher: ${teacherFilter}</p></div>`;
-            return;
+            return `<div class="empty-state"><p>No schedule found for teacher: ${escapeHtml(teacherFilter)}</p></div>`;
         }
 
-        html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${teacherFilter}</h3>`;
-        html += '<table class="timetable">';
-        html += '<thead><tr><th>Day/Period</th>';
-        for ( let i = 1; i <= maxPeriods; i++ ) {
+        let maxPeriodsArray = Array.from({length: maxPeriods}, (_, i) => i + 1);
+
+        const headerHtml = maxPeriodsArray.map( i => {
             const headerTime = getPeriodTime( i );
-            html += `<th><div>P${i}</div><div class="period-header-time">${headerTime}</div></th>`;
-        }
+            return `<th><div>P${i}</div><div class="period-header-time">${headerTime}</div></th>`;
+        }).join('');
 
-        html += '</tr></thead><tbody>';
-
-        dayOrder.forEach( dayName => {
-            html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
-
-            for ( let p = 1; p <= maxPeriods; p++ ) {
+        const bodyHtml = dayOrder.map( dayName => {
+            const rowCells = maxPeriodsArray.map( p => {
                 const entries = ( teacherGrid[dayName] && teacherGrid[dayName][p] ) ? teacherGrid[dayName][p] : [];
                 let periodInfo = '';
 
                 if ( entries.length > 0 ) {
                     const periodText = entries.map( entry =>
-                        `${entry.className}: ${entry.subject || '<span class="no-subject-marker" title="No subject assigned" aria-label="No subject assigned">🟡</span>'}`
+                        `${escapeHtml(entry.className)}: ${entry.subject ? escapeHtml(entry.subject) : `<span class="no-subject-marker" title="No subject assigned" aria-label="No subject assigned">🟡</span>`}`
                     ).join( '<br>' );
 
-                    periodInfo = `
-                                <div class="period-subject">${periodText}</div>
-                            `;
+                    periodInfo = `<div class="period-subject">${periodText}</div>`;
                 }
 
-                html += `<td class="period-cell">${periodInfo}</td>`;
-            }
+                return `<td class="period-cell">${periodInfo}</td>`;
+            }).join('');
 
-            html += '</tr>';
-        } );
+            return `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>${rowCells}</tr>`;
+        }).join('');
 
-        html += '</tbody></table>';
-    } );
-
-    return html;
+        return `
+            <h3 style="margin: 20px 0 10px 15px;">Schedule for ${escapeHtml(teacherFilter)}</h3>
+            <table class="timetable">
+                <thead><tr><th>Day/Period</th>${headerHtml}</tr></thead>
+                <tbody>${bodyHtml}</tbody>
+            </table>
+        `;
+    } ).join('');
 }
 
 // Generate subject timetable HTML
-function generateSubjectTimetableHTML( subjectFilterKeys ) {
+function renderSubjectTimetableHTML( subjectFilterKeys ) {
     if ( !subjectFilterKeys || subjectFilterKeys.length === 0 ) {
         return '<div class="empty-state"><p>Please select one or more subjects to view schedules.</p></div>';
     }
 
     if ( !state.timetableData ) return '<p>No timetable data.</p>';
 
-    let html = '';
-    subjectFilterKeys.forEach( subjectFilterKey => {
+    return subjectFilterKeys.map( subjectFilterKey => {
         const subjectLabel = getUniqueSubjectMap().get( subjectFilterKey ) || subjectFilterKey;
-
-        // Find all classes where this subject is taught
         const subjectClasses = {};
         const classNames = Object.keys( state.timetableData );
 
@@ -6441,55 +6984,38 @@ function generateSubjectTimetableHTML( subjectFilterKeys ) {
             } );
         } );
 
-        if ( Object.keys( subjectClasses ).length === 0 ) {
-            html += `<div class="empty-state"><p>No schedule found for subject: ${subjectLabel}</p></div>`;
-            return;
+        const classes = Object.keys( subjectClasses );
+        if ( classes.length === 0 ) {
+            return `<div class="empty-state"><p>No schedule found for subject: ${escapeHtml(subjectLabel)}</p></div>`;
         }
 
-        html += `<h3 style="margin: 20px 0 10px 15px;">Schedule for ${subjectLabel}</h3>`;
-        html += '<table class="timetable">';
-        html += '<thead><tr><th>Day/Period</th>';
-
-        // Get all classes where this subject is taught
-        const classes = Object.keys( subjectClasses );
-
-        classes.forEach( className => {
-            html += `<th>${className}</th>`;
-        } );
-
-        html += '</tr></thead><tbody>';
-
-        // Data rows
+        const headerHtml = classes.map( className => `<th>${escapeHtml(className)}</th>` ).join('');
         const dayOrder = getAllActiveDays();
 
-        dayOrder.forEach( dayName => {
-            html += `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>`;
-
-            classes.forEach( className => {
+        const bodyHtml = dayOrder.map( dayName => {
+            const rowCells = classes.map( className => {
                 const dayPeriods = subjectClasses[className][dayName] || [];
                 let periodInfo = '';
 
                 if ( dayPeriods.length > 0 ) {
-                    // Show all periods for this subject in this class on this day
-                    const periodText = dayPeriods.map( p =>
-                        `P${p.period}: ${p.teacherName}`
-                    ).join( '<br>' );
-
-                    periodInfo = `
-                                <div class="period-subject">${periodText}</div>
-                            `;
+                    const periodText = dayPeriods.map( p => `P${p.period}: ${escapeHtml(p.teacherName)}` ).join( '<br>' );
+                    periodInfo = `<div class="period-subject">${periodText}</div>`;
                 }
 
-                html += `<td class="period-cell">${periodInfo}</td>`;
-            } );
+                return `<td class="period-cell">${periodInfo}</td>`;
+            }).join('');
 
-            html += '</tr>';
-        } );
+            return `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>${rowCells}</tr>`;
+        }).join('');
 
-        html += '</tbody></table>';
-    } );
-
-    return html;
+        return `
+            <h3 style="margin: 20px 0 10px 15px;">Schedule for ${escapeHtml(subjectLabel)}</h3>
+            <table class="timetable">
+                <thead><tr><th>Day/Period</th>${headerHtml}</tr></thead>
+                <tbody>${bodyHtml}</tbody>
+            </table>
+        `;
+    } ).join('');
 }
 
 // Check if a date is a holiday
@@ -6662,11 +7188,6 @@ async function runOverlapCheckWithProgress() {
     }
 }
 
-function escapeCSVField( value ) {
-    const stringValue = String( value ?? '' );
-    const escapedValue = stringValue.replace( /"/g, '""' );
-    return `"${escapedValue}"`;
-}
 
 async function exportOverlapsCSV() {
     if ( !state.timetableData ) {
@@ -6718,13 +7239,13 @@ async function exportOverlapsCSV() {
         let csv = 'Class,Day,Period,Teacher,Subject,Time,Conflict Details\n';
         overlapRows.forEach( row => {
             csv += [
-                escapeCSVField( row.className ),
-                escapeCSVField( row.day ),
-                escapeCSVField( row.period ),
-                escapeCSVField( row.teacher ),
-                escapeCSVField( row.subject ),
-                escapeCSVField( row.time ),
-                escapeCSVField( row.overlapInfo )
+                escapeCsvField( row.className ),
+                escapeCsvField( row.day ),
+                escapeCsvField( row.period ),
+                escapeCsvField( row.teacher ),
+                escapeCsvField( row.subject ),
+                escapeCsvField( row.time ),
+                escapeCsvField( row.overlapInfo )
             ].join( ',' ) + '\n';
         } );
 
@@ -7727,31 +8248,31 @@ function checkLabViolations() {
 
     for ( const [className, classData] of Object.entries( state.timetableData ) ) {
         ( classData.days || [] ).forEach( day => {
-            const cscPeriods = ( day.periods || [] ).filter( p => toCleanString( p.subject ).toUpperCase() === 'CSC' );
-            if ( cscPeriods.length === 0 ) return;
+            const cslPeriods = ( day.periods || [] ).filter( p => toCleanString( p.subject ).toUpperCase() === 'CSL' );
+            if ( cslPeriods.length === 0 ) return;
 
-            cscPeriods.forEach( p => {
+            cslPeriods.forEach( p => {
                 const periodNum = p.period;
                 let isValid = false;
 
                 if ( periodNum === 1 ) {
                     const p2 = day.periods.find( x => x.period === 2 );
-                    if ( p2 && toCleanString( p2.subject ).toUpperCase() === 'CSC' ) {
+                    if ( p2 && toCleanString( p2.subject ).toUpperCase() === 'CSL' ) {
                         isValid = true;
                     }
                 } else if ( periodNum === 2 ) {
                     const p1 = day.periods.find( x => x.period === 1 );
-                    if ( p1 && toCleanString( p1.subject ).toUpperCase() === 'CSC' ) {
+                    if ( p1 && toCleanString( p1.subject ).toUpperCase() === 'CSL' ) {
                         isValid = true;
                     }
                 } else if ( periodNum === 5 ) {
                     const p6 = day.periods.find( x => x.period === 6 );
-                    if ( p6 && toCleanString( p6.subject ).toUpperCase() === 'CSC' ) {
+                    if ( p6 && toCleanString( p6.subject ).toUpperCase() === 'CSL' ) {
                         isValid = true;
                     }
                 } else if ( periodNum === 6 ) {
                     const p5 = day.periods.find( x => x.period === 5 );
-                    if ( p5 && toCleanString( p5.subject ).toUpperCase() === 'CSC' ) {
+                    if ( p5 && toCleanString( p5.subject ).toUpperCase() === 'CSL' ) {
                         isValid = true;
                     }
                 }
@@ -7856,7 +8377,7 @@ function generateGenerationReport() {
         passedChecks.push( "Teacher conflict check passed: No teacher overlaps detected." );
     }
     if ( labViolations.length === 0 ) {
-        passedChecks.push( "Lab block validation passed: All CSC periods scheduled in valid consecutive blocks." );
+        passedChecks.push( "Lab block validation passed: All CSL periods scheduled in valid consecutive blocks." );
     }
     if ( workloads.length === 0 ) {
         passedChecks.push( "Teacher workload check passed: No teachers exceed their workload limits." );
