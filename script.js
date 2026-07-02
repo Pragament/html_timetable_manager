@@ -2771,54 +2771,63 @@ function exceedsDailySubjectLimit( className, dayName, subject, additionalPeriod
     return current + additionalPeriods > maxPerDay;
 }
 
-/** Score a candidate slot — higher is better. */
+/**
+ * Phase 3 — Slot Scorer
+ * Score a candidate slot — higher is better.
+ * Formula updated per architecture plan.
+ */
 function scoreCandidateSlot( timetable, task, dayName, periodNumbers, options ) {
     let score = 100;
     const subjectKey = normalizeSubjectCode( task.subject );
     const schoolDays = getStandardDayOrder( task.className );
     const dailyCount = getDailySubjectCount( task.className, dayName, task.subject );
 
-    if ( dailyCount === 0 ) score += 40;
+    // Subject spread: reward days that don't already have this subject
+    if ( dailyCount === 0 )      score += 40;
     else if ( dailyCount === 1 ) score += 10;
-    else score -= 50;
+    else                         score -= 50;
 
-    const dayIndex = schoolDays.indexOf( dayName );
+    // Prefer the day with the fewest occurrences of this subject (even distribution)
     const weeklyCounts = schoolDays.map( day => getDailySubjectCount( task.className, day, task.subject ) );
     const minWeeklyDayCount = Math.min( ...weeklyCounts );
     if ( dailyCount === minWeeklyDayCount ) score += 25;
 
+    // Penalise adjacent same-subject periods (before / after)
     periodNumbers.forEach( periodNumber => {
         const previousSubject = getPreviousPeriodSubject( timetable, task.className, dayName, periodNumber );
-        if ( previousSubject && previousSubject === subjectKey ) {
-            score -= 60;
-        }
+        if ( previousSubject && previousSubject === subjectKey ) score -= 60; // adjacent duplicate — strongly penalise
         const nextPeriod = getClassDayPeriod( timetable, task.className, dayName, periodNumber + 1 );
-        if ( nextPeriod && normalizeSubjectCode( nextPeriod.subject ) === subjectKey ) {
-            score -= 30;
-        }
+        if ( nextPeriod && normalizeSubjectCode( nextPeriod.subject ) === subjectKey ) score -= 30;
     } );
 
+    // Fixed-period preference bonus
     if ( options.preferFixedPeriods ) score += 15;
 
-    const teacherLoad = getTeacherLoad( task.teacherId );
-    score -= teacherLoad * 5;
+    // Phase 3: Preferred early periods (P1–P4)
+    const minPeriod = Math.min( ...periodNumbers );
+    if ( minPeriod <= 4 ) score += 10;
 
-    if ( ['Monday', 'Tuesday', 'Wednesday'].includes( dayName ) ) {
-        score += 10;
-    }
+    // Phase 5: Teacher slack — tight teachers (low slack) get boost to be scheduled first
+    const teacherSlack = options.teacherSlack !== undefined ? options.teacherSlack : 10;
+    if ( teacherSlack < 3 )       score += 20;
+    else if ( teacherSlack < 8 )  score += 10;
+    else                          score -= 5;  // comfortable teacher — deprioritise slightly
 
-    let emptySlotsToday = 0;
+    // Phase 5: Class slack — tight class gets boost
+    const classSlack = options.classSlack !== undefined ? options.classSlack : 10;
+    if ( classSlack < 3 )  score += 15;
+
+    // Phase 3: Prefer slots that leave more future empty slots in this class (preserve flexibility)
     const classData = timetable[task.className];
     if ( classData ) {
         const dayData = classData.days.find( d => d.dayName === dayName );
         if ( dayData ) {
-            dayData.periods.forEach( p => {
-                if ( !p.isLocked && isPeriodSlotEmpty( p ) ) emptySlotsToday++;
-            } );
+            let emptySlotsToday = dayData.periods.filter( p => !p.isLocked && isPeriodSlotEmpty( p ) ).length;
+            score += emptySlotsToday * 2; // more empty slots remaining = more flexible = reward
         }
     }
-    score += ( 8 - emptySlotsToday ) * 2;
 
+    // Lab block preferred positions
     if ( options.isLabBlock && periodNumbers.length === 2 ) {
         const blockKey = periodNumbers.join( '-' );
         if ( blockKey === '1-2' || blockKey === '5-6' ) score += 20;
@@ -3667,6 +3676,485 @@ function buildSchedulingTasks( unresolvedOut = [] ) {
     return allTasks;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MRV SCHEDULER ENGINE  (Phases 1–7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Phase 2 — Scheduler Context
+ * Creates a lightweight view object pointing at the existing global trackers.
+ * No data is copied — mutations via assignSlotWithTracking are reflected here.
+ */
+function prepareSchedulerContext( timetable ) {
+    return {
+        timetable,
+        teacherBusy: teacherBusyTracker,          // existing global
+        teacherLoad: teacherAssignments,           // existing global
+        assignmentMap: state.assignmentReverseMap, // existing global
+        teacherSlack: {},   // Phase 5 — populated by computeSlack()
+        classSlack: {},     // Phase 5 — populated by computeSlack()
+        taskCandidates: new Map() // Phase 1 — task → [{dayName, periodNumbers}]
+    };
+}
+
+/**
+ * Phase 1 — Candidate List Pre-computation
+ * For every normal/combined task that has not yet been fully scheduled,
+ * enumerate all (day, period) pairs that are currently legal.
+ * Stores result in ctx.taskCandidates and as task.candidates.
+ */
+function buildCandidateLists( tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled ) return;
+        const candidates = [];
+        const schoolDays = getStandardDayOrder( task.className );
+        const periodsPerDay = state.config.periodsPerDay || 8;
+
+        if ( task.isClubbed && Array.isArray( task.clubbedClasses ) ) {
+            // Combined task: every class must have an empty slot on the same day/period
+            schoolDays.forEach( dayName => {
+                for ( let p = 1; p <= periodsPerDay; p++ ) {
+                    const nums = [p];
+                    const tid = toCleanString( task.teacherId );
+                    if ( isTeacherBusy( tid, dayName, p ) ) continue;
+                    if ( getTeacherLoad( tid ) + 1 > maxTeacherPeriods ) continue;
+                    let allClear = true;
+                    for ( const cls of task.clubbedClasses ) {
+                        const v = validateSlot( timetable, cls, dayName, nums, tid, maxTeacherPeriods );
+                        if ( !v.valid ) { allClear = false; break; }
+                        if ( exceedsDailySubjectLimit( cls, dayName, task.subject, 1, { isLabBlock: false } ) ) { allClear = false; break; }
+                    }
+                    if ( allClear ) candidates.push( { dayName, periodNumbers: nums } );
+                }
+            } );
+        } else {
+            schoolDays.forEach( dayName => {
+                for ( let p = 1; p <= periodsPerDay; p++ ) {
+                    const nums = [p];
+                    const v = validateSlot( timetable, task.className, dayName, nums, task.teacherId, maxTeacherPeriods );
+                    if ( !v.valid ) continue;
+                    if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) continue;
+                    candidates.push( { dayName, periodNumbers: nums } );
+                }
+            } );
+        }
+
+        task.candidates = candidates;
+        ctx.taskCandidates.set( task, candidates );
+    } );
+}
+
+/**
+ * Phase 5 — Slack Calculation
+ * teacherSlack[tid]   = maxPeriods - sum(periodsNeeded for tid)
+ * classSlack[cls]     = totalSlots - sum(periodsNeeded for cls)
+ */
+function computeSlack( tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const periodsPerDay = state.config.periodsPerDay || 8;
+
+    const teacherDemand = {};
+    const classDemand = {};
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled ) return;
+        const tid = toCleanString( task.teacherId );
+        teacherDemand[tid] = ( teacherDemand[tid] || 0 ) + ( task.periodsNeeded || 0 );
+        const classes = ( task.isClubbed && task.clubbedClasses ) ? task.clubbedClasses : [task.className];
+        classes.forEach( cls => {
+            classDemand[cls] = ( classDemand[cls] || 0 ) + ( task.periodsNeeded || 0 );
+        } );
+    } );
+
+    Object.entries( teacherDemand ).forEach( ( [tid, demand] ) => {
+        ctx.teacherSlack[tid] = Math.max( 0, maxTeacherPeriods - demand );
+    } );
+
+    Object.entries( classDemand ).forEach( ( [cls, demand] ) => {
+        const days = getStandardDayOrder( cls );
+        const totalSlots = days.length * periodsPerDay;
+        ctx.classSlack[cls] = Math.max( 0, totalSlots - demand );
+    } );
+}
+
+/**
+ * Phase 1/4 — Incremental Candidate Refresh
+ * After assigning a slot, only re-compute candidates for tasks that share
+ * the same teacher (tid) OR the same class (className) on the affected day.
+ * This keeps the candidate lists accurate without full recomputation.
+ */
+function updateCandidatesAfterAssign( tid, className, dayName, periodNumber, tasks, ctx ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+
+    tasks.forEach( task => {
+        if ( task.alreadyScheduled || task.periodsNeeded <= 0 ) return;
+        const taskTid = toCleanString( task.teacherId );
+        const sharesTeacher = ( taskTid === tid );
+        const sharesClass = task.isClubbed
+            ? ( task.clubbedClasses || [] ).includes( className )
+            : task.className === className;
+
+        if ( !sharesTeacher && !sharesClass ) return;
+
+        // Rebuild only entries that involve the affected day/period
+        if ( !task.candidates ) task.candidates = [];
+        task.candidates = task.candidates.filter( c => {
+            if ( c.dayName !== dayName ) return true;
+            if ( !c.periodNumbers.includes( periodNumber ) ) return true;
+
+            // Re-validate this specific slot
+            if ( task.isClubbed && Array.isArray( task.clubbedClasses ) ) {
+                for ( const cls of task.clubbedClasses ) {
+                    const v = validateSlot( timetable, cls, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+                    if ( !v.valid ) return false;
+                }
+                return true;
+            }
+            const v = validateSlot( timetable, task.className, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+            return v.valid;
+        } );
+        ctx.taskCandidates.set( task, task.candidates );
+    } );
+}
+
+/**
+ * Phase 4 — Forward Checking
+ * Before committing an assignment, check: would this assignment reduce
+ * any other unfinished task's candidates to zero?
+ * Returns true if safe to proceed, false if this slot should be skipped.
+ */
+function forwardCheck( tid, className, dayName, periodNumber, allMrvTasks ) {
+    for ( const other of allMrvTasks ) {
+        if ( other.alreadyScheduled || other.periodsNeeded <= 0 ) continue;
+        const otherTid = toCleanString( other.teacherId );
+        const sharesTeacher = ( otherTid === tid );
+        const sharesClass = other.isClubbed
+            ? ( other.clubbedClasses || [] ).includes( className )
+            : other.className === className;
+
+        if ( !sharesTeacher && !sharesClass ) continue;
+
+        // How many current candidates would survive after this assignment?
+        const surviving = ( other.candidates || [] ).filter( c => {
+            if ( sharesTeacher && c.dayName === dayName && c.periodNumbers.includes( periodNumber ) ) return false;
+            if ( sharesClass && !other.isClubbed && c.dayName === dayName && c.periodNumbers.includes( periodNumber ) ) return false;
+            return true;
+        } );
+
+        // If this other task would have 0 candidates but still needs periods → reject
+        if ( surviving.length === 0 && other.periodsNeeded > 0 ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Phase 6 — Recursive Repair (depth-limited DFS)
+ * When a task has no valid candidates, try to move one blocking assignment
+ * away to open a slot. Recurse up to maxDepth levels.
+ * Returns true if repair succeeded and the task was placed.
+ */
+function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
+    if ( depth > maxDepth ) return false;
+    const timetable = ctx.timetable;
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const tid = toCleanString( task.teacherId );
+    const schoolDays = getStandardDayOrder( task.className );
+    const periodsPerDay = state.config.periodsPerDay || 8;
+
+    for ( const dayName of schoolDays ) {
+        for ( let p = 1; p <= periodsPerDay; p++ ) {
+            // Find the period entry for this task's class
+            const cell = getClassDayPeriod( timetable, task.className, dayName, p );
+            if ( !cell || cell.isLocked ) continue;
+
+            if ( isPeriodSlotEmpty( cell ) ) {
+                // Slot is empty but teacher is busy — teacher conflict
+                if ( !isTeacherBusy( tid, dayName, p ) ) continue; // already clean, would have been in candidates
+                // Teacher is busy on this (day, period) for another class — try to find an alternate slot for that other class
+                // Find which class has this teacher blocked
+                let conflictClass = null;
+                let conflictCell = null;
+                for ( const cls of Object.keys( timetable ) ) {
+                    if ( cls === task.className ) continue;
+                    const c = getClassDayPeriod( timetable, cls, dayName, p );
+                    if ( c && toCleanString( c.teacherId ) === tid && !isPeriodSlotEmpty( c ) ) {
+                        conflictClass = cls;
+                        conflictCell = c;
+                        break;
+                    }
+                }
+                if ( !conflictClass ) continue;
+
+                // Save conflict slot state
+                const savedSubject = conflictCell.subject;
+                const savedTeacher = conflictCell.teacherName;
+                const savedId = conflictCell.assignmentId;
+
+                // Build a temporary displaced task to find an alternate home
+                const displacedTask = {
+                    className: conflictClass,
+                    teacherId: tid,
+                    teacherName: savedTeacher,
+                    subject: savedSubject,
+                    periodsNeeded: 1,
+                    isClubbed: false, isLabSubject: false, hasFixedPeriods: false,
+                    fixedPeriodGroups: [],
+                    candidates: null
+                };
+
+                // Unassign conflicting slot
+                unassignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedId );
+
+                // Re-check if task can now go into this slot
+                const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) {
+                    // Find alternate home for displaced task
+                    const altDays = getStandardDayOrder( conflictClass );
+                    let displaced = false;
+                    for ( const altDay of altDays ) {
+                        for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
+                            if ( altDay === dayName && ap === p ) continue;
+                            const av = validateSlot( timetable, conflictClass, altDay, [ap], tid, maxTeacherPeriods );
+                            if ( !av.valid ) continue;
+                            if ( exceedsDailySubjectLimit( conflictClass, altDay, savedSubject, 1, { isLabBlock: false } ) ) continue;
+                            assignSlotWithTracking( timetable, conflictClass, altDay, [ap], tid, savedSubject, savedTeacher, savedId );
+                            displaced = true;
+                            break;
+                        }
+                        if ( displaced ) break;
+                    }
+
+                    if ( displaced ) {
+                        // Place the original task
+                        const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                        if ( ok ) {
+                            updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                            return true;
+                        }
+                    }
+
+                    // Repair of displaced failed — recurse deeper
+                    if ( depth < maxDepth ) {
+                        displacedTask.candidates = null;
+                        buildCandidateLists( [displacedTask], ctx );
+                        const deeper = recursiveRepair( displacedTask, allMrvTasks, ctx, depth + 1, maxDepth );
+                        if ( deeper ) {
+                            const ok2 = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            if ( ok2 ) {
+                                updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // Restore conflict slot (repair failed)
+                assignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedTeacher, savedId );
+
+            } else {
+                // Slot is occupied by someone else — teacher is free but class slot is full
+                const occupantTid = toCleanString( cell.teacherId );
+                if ( occupantTid === tid ) continue; // same teacher, different block — not a repairable conflict here
+                const savedSubject = cell.subject;
+                const savedName = cell.teacherName;
+                const savedId = cell.assignmentId;
+
+                if ( !isTeacherBusy( tid, dayName, p ) ) {
+                    // Teacher IS free but class slot is occupied — evict occupant
+                    unassignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedId );
+
+                    const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                    if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false } ) ) {
+                        // Find alternate home for evicted occupant
+                        const altDays = getStandardDayOrder( task.className );
+                        let evicted = false;
+                        for ( const altDay of altDays ) {
+                            for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
+                                if ( altDay === dayName && ap === p ) continue;
+                                const av = validateSlot( timetable, task.className, altDay, [ap], occupantTid, maxTeacherPeriods );
+                                if ( !av.valid ) continue;
+                                if ( exceedsDailySubjectLimit( task.className, altDay, savedSubject, 1, { isLabBlock: false } ) ) continue;
+                                assignSlotWithTracking( timetable, task.className, altDay, [ap], occupantTid, savedSubject, savedName, savedId );
+                                evicted = true;
+                                break;
+                            }
+                            if ( evicted ) break;
+                        }
+
+                        if ( evicted ) {
+                            const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            if ( ok ) {
+                                updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
+                                return true;
+                            }
+                        }
+                    }
+                    // Restore evicted slot
+                    assignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedName, savedId );
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Phase 2 — MRV Scheduler Main Loop
+ * Schedules all normal + combined tasks using:
+ *   1. Dynamic MRV ordering (fewest candidates first)
+ *   2. Forward checking before each assignment
+ *   3. Candidate list update after each assignment
+ *   4. Recursive repair when no candidates remain
+ *
+ * Fixed/CSL/Lab tasks must already be scheduled before calling this.
+ */
+function runMRVScheduler( tasks, ctx, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
+    const REPAIR_DEPTH = 3;
+
+    // Filter to only tasks this scheduler handles (normal + combined, not fixed/lab/csl)
+    const mrvTasks = tasks.filter( t =>
+        !t.alreadyScheduled &&
+        t.taskType !== 'fixed-csl' &&
+        t.taskType !== 'lab' &&
+        t.taskType !== 'fixed' &&
+        t.taskType !== 'fixed-combined'
+    );
+
+    // Phase 1: Build initial candidate lists
+    buildCandidateLists( mrvTasks, ctx );
+
+    // Phase 5: Compute slack
+    computeSlack( mrvTasks, ctx );
+
+    let maxIterations = mrvTasks.reduce( ( s, t ) => s + ( t.periodsNeeded || 0 ), 0 ) * 3;
+    let iterations = 0;
+
+    while ( iterations++ < maxIterations ) {
+        // Find tasks still needing periods
+        const pending = mrvTasks.filter( t => ( t.periodsNeeded || 0 ) > 0 && !t.alreadyScheduled );
+        if ( pending.length === 0 ) break;
+
+        // MRV sort: fewest candidates first, with slack as tiebreaker
+        pending.sort( ( a, b ) => {
+            const aCandCount = ( a.candidates || [] ).length;
+            const bCandCount = ( b.candidates || [] ).length;
+            if ( aCandCount !== bCandCount ) return aCandCount - bCandCount;
+            // Tiebreak: lab/combined/fixed bonus, then teacher slack (tight teacher first)
+            return taskDifficultyScore( b ) - taskDifficultyScore( a );
+        } );
+
+        const task = pending[0];
+        const tid = toCleanString( task.teacherId );
+        let placed = false;
+
+        // Score all candidates and try in order (Phase 3)
+        const scoredCandidates = ( task.candidates || [] )
+            .map( c => ( {
+                ...c,
+                score: scoreCandidateSlot( timetable, task, c.dayName, c.periodNumbers, {
+                    preferFixedPeriods: false,
+                    isLabBlock: task.isLabSubject,
+                    teacherSlack: ctx.teacherSlack[tid] || 0,
+                    classSlack: ctx.classSlack[task.className] || 0
+                } )
+            } ) )
+            .sort( ( a, b ) => b.score - a.score );
+
+        for ( const candidate of scoredCandidates ) {
+            const { dayName, periodNumbers } = candidate;
+
+            // Phase 4: Forward check
+            const safe = forwardCheck( tid, task.className, dayName, periodNumbers[0], mrvTasks );
+            if ( !safe ) continue;
+
+            // Validate once more (state may have changed since candidate was built)
+            const v = validateSlot( timetable, task.className, dayName, periodNumbers, tid, maxTeacherPeriods );
+            if ( !v.valid ) continue;
+            if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject } ) ) continue;
+
+            // Check locked/break cells for combined tasks
+            if ( task.isClubbed && task.clubbedClasses ) {
+                const blockHasLocked = periodNumbers.some( pn =>
+                    ( task.clubbedClasses || [] ).some( cls => {
+                        const pe = getClassDayPeriod( timetable, cls, dayName, pn );
+                        return pe && pe.isLocked;
+                    } )
+                );
+                if ( blockHasLocked ) continue;
+
+                const assignmentId = `mrv-c-${tid}-${dayName}-${periodNumbers[0]}`;
+                let allOk = true;
+                for ( const cls of task.clubbedClasses ) {
+                    const ok = assignSlotWithTracking( timetable, cls, dayName, periodNumbers, tid, task.subject, task.teacherName, assignmentId );
+                    if ( !ok ) { allOk = false; break; }
+                }
+                if ( allOk ) {
+                    task.periodsNeeded -= 1;
+                    if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+                    updateCandidatesAfterAssign( tid, task.className, dayName, periodNumbers[0], mrvTasks, ctx );
+                    placed = true;
+                    break;
+                }
+            } else {
+                const ok = assignSlotWithTracking( timetable, task.className, dayName, periodNumbers, tid, task.subject, task.teacherName );
+                if ( ok ) {
+                    task.periodsNeeded -= 1;
+                    if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+                    updateCandidatesAfterAssign( tid, task.className, dayName, periodNumbers[0], mrvTasks, ctx );
+                    placed = true;
+                    break;
+                }
+            }
+        }
+
+        if ( !placed ) {
+            // Phase 6: Recursive repair
+            const repaired = recursiveRepair( task, mrvTasks, ctx, 0, REPAIR_DEPTH );
+            if ( repaired ) {
+                task.periodsNeeded -= 1;
+                if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
+            } else {
+                // Phase 7: Structured diagnostics
+                const blockedSlots = [];
+                const schoolDays = getStandardDayOrder( task.className );
+                const periodsPerDay = state.config.periodsPerDay || 8;
+                schoolDays.forEach( dayName => {
+                    for ( let p = 1; p <= periodsPerDay; p++ ) {
+                        const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                        if ( !v.valid ) blockedSlots.push( `${dayName}-P${p}: ${v.reason}` );
+                    }
+                } );
+
+                unscheduled.push( {
+                    className: task.isClubbed ? ( task.clubbedClasses || [] ).join( ';' ) : task.className,
+                    teacherId: tid,
+                    teacherName: task.teacherName,
+                    subject: task.subject,
+                    periodsNeeded: task.periodsNeeded,
+                    periodsScheduled: ( task._originalPeriods || task.periodsNeeded ) - task.periodsNeeded,
+                    periodsUnscheduled: task.periodsNeeded,
+                    reason: 'No valid candidate slots after MRV + forward checking + repair',
+                    candidateCount: ( task.candidates || [] ).length,
+                    blockedSlots: blockedSlots.slice( 0, 10 ),
+                    diagnostics: blockedSlots.slice( 0, 10 )
+                } );
+                task.alreadyScheduled = true; // prevent infinite loop
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END MRV ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
 
 function findBestClubbedCandidateSlot( timetable, task, maxTeacherPeriods, labBlockList ) {
     const candidates = [];
@@ -5071,14 +5559,28 @@ function validateFeasibilityBeforeGeneration( allTasks ) {
     return issues;
 }
 
+/**
+ * Task difficulty score — used as tiebreaker in MRV sort and as primary sort
+ * for the legacy fixed/lab bucket ordering.
+ * Phase 3/5: candidate count dominates when available.
+ */
 function taskDifficultyScore( task ) {
     let score = 0;
+
+    // Dominant term: inverse of remaining candidate count (MRV core)
+    const candCount = ( task.candidates || [] ).length;
+    if ( candCount > 0 ) {
+        score += 10000 / candCount;
+    } else if ( candCount === 0 && !task.alreadyScheduled ) {
+        score += 20000; // zero candidates — schedule immediately or mark failed
+    }
+
+    // Structural bonuses (tiebreakers)
     if ( task.hasFixedPeriods ) score += 1000;
-    if ( task.isLabSubject ) score += 800;
-    if ( task.isClubbed ) score += 600;
+    if ( task.isLabSubject )    score += 800;
+    if ( task.isClubbed )       score += 600;
     score += ( task.fixedPeriodGroups?.length || 0 ) * 100;
     score += Number( task.periodsNeeded || 0 ) * 20;
-
     score += ( task.teacherTaskCount || 0 ) * 10;
 
     return score;
@@ -5146,10 +5648,12 @@ function generateTimetable() {
         if ( buckets[task.taskType] ) buckets[task.taskType].push( task );
     } );
 
+    // Legacy sort for fixed/lab/CSL buckets (candidate count not yet built)
     Object.values( buckets ).forEach( bucket => {
         bucket.sort( ( a, b ) => taskDifficultyScore( b ) - taskDifficultyScore( a ) );
     } );
 
+    // ── PHASE A: Fixed/CSL/Lab (unchanged legacy scheduling) ──────────────────
     scheduleFixedCslLabs( timetable, buckets['fixed-csl'], unscheduled );
 
     reserveClassP1Slots( timetable, allTasks.filter( t => t.hasFixedPeriods && taskRequiresFixedPeriodOne( t ) ) );
@@ -5162,23 +5666,27 @@ function generateTimetable() {
 
     scheduleFixedCombinedTasks( timetable, buckets['fixed-combined'], deferredTasks, unscheduled );
 
-    buckets['combined'].forEach( task => {
-        if ( !task.alreadyScheduled ) scheduleCombinedTask( timetable, task, unscheduled );
-    } );
-
     const classTeacherP1Tasks = deferredTasks.filter( task => isClassTeacherP1Task( task ) );
-    const otherDeferredTasks = deferredTasks.filter( task => !isClassTeacherP1Task( task ) );
-
+    const otherDeferredTasks  = deferredTasks.filter( task => !isClassTeacherP1Task( task ) );
     scheduleClassTeacherP1AfterLabs( timetable, classTeacherP1Tasks, unscheduled );
 
-    [...buckets['normal'], ...otherDeferredTasks.filter( task => !task.isLabSubject )]
-        .forEach( task => {
-            if ( !task.alreadyScheduled ) scheduleNormalTask( timetable, task, unscheduled );
-        } );
+    // ── PHASE B: MRV Scheduler (normal + combined + deferred normal) ──────────
+    const ctx = prepareSchedulerContext( timetable );
 
-    const unscheduledAfterMain = [...unscheduled];
-    const retryUnscheduled = fillRemainingEmptyTeachingSlots( timetable, unscheduledAfterMain );
-    let finalUnscheduled = fillAllEmptyPeriods( timetable, retryUnscheduled );
+    // Stamp original periods needed for diagnostics
+    allTasks.forEach( t => { t._originalPeriods = t.periodsNeeded; } );
+
+    // Collect all tasks the MRV scheduler will handle
+    const mrvInputTasks = [
+        ...buckets['combined'],
+        ...buckets['normal'],
+        ...otherDeferredTasks.filter( t => !t.isLabSubject )
+    ];
+
+    runMRVScheduler( mrvInputTasks, ctx, unscheduled );
+
+    // ── PHASE C: Fill remaining empty slots (last resort) ─────────────────────
+    let finalUnscheduled = fillAllEmptyPeriods( timetable, unscheduled );
     finalUnscheduled = finalUnscheduled.filter( t => t.periodsUnscheduled > 0 );
 
     saveGeneratedTimetable( timetable, finalUnscheduled );
