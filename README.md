@@ -1,4 +1,4 @@
-## First-Time Setup: Importing Data
+## First-Time Setup: Importing Data -
 1 Teacher List: Go to Teacher List, click Import Teachers CSV, and upload teacher-list.csv from the Sample Data folder.
 2 Teacher Grade-Section Subject Mapping: Go to Teacher Grade-Section Subject Mapping, click Import Mapping CSV, and upload teacher-mapping-final.csv from the Sample Data folder.
 3 Bulk Subjects: Go to Bulk Subjects and upload subject-code-final.csv from the Sample Data folder.
