@@ -2491,7 +2491,7 @@ function normalizeLoadedTimetableData( data ) {
 
 // --- Generate Timetable (greedy scheduler) ---
 
-
+let teacherBusyTracker = {};
 let currentUnscheduledList = [];
 
 function getLabSubjectCode() {
@@ -2694,8 +2694,6 @@ function resetGenerationTrackers() {
 
 // Tracks how many times each subject appears per class per day (for spread constraint).
 let classDailySubjectCount = {};
-let teacherBusyTracker = {};
-let teacherLoadTracker = {};
 let teacherAssignments = {};
 
 /** Normalize subject to canonical code (PT, CSC, SOC, etc.). */
@@ -2785,8 +2783,7 @@ function getPreviousPeriodSubject( timetable, className, dayName, periodNumber )
 }
 
 /** Enforce max 1–2 periods of the same subject per class per day. */
-function exceedsDailySubjectLimit( ctx, className, dayName, subject, additionalPeriods, options ) {
-    const { timetable, config } = ctx;
+function exceedsDailySubjectLimit( className, dayName, subject, additionalPeriods, options ) {
     let maxPerDay = options.isLabBlock ? 2 : 1;
     if ( options.totalPeriodsNeeded > getStandardDayOrder( className ).length ) {
         maxPerDay = 2;
@@ -2800,14 +2797,8 @@ function exceedsDailySubjectLimit( ctx, className, dayName, subject, additionalP
  * Score a candidate slot — higher is better.
  * Formula updated per architecture plan.
  */
-function scoreCandidateSlot( ctx, task, dayName, periodNumbers, options ) {
-    const { timetable, config } = ctx;
-    let score = 0;
-
-    // Core feasibility checks
-    const p1 = getClassDayPeriod( timetable, task.className, dayName, periodNumbers[0] );
-    if ( !p1 ) return -9999;
-    
+function scoreCandidateSlot( timetable, task, dayName, periodNumbers, options ) {
+    let score = 100;
     const subjectKey = normalizeSubjectCode( task.subject );
     const schoolDays = getStandardDayOrder( task.className );
     const dailyCount = getDailySubjectCount( task.className, dayName, task.subject );
@@ -2867,10 +2858,9 @@ function scoreCandidateSlot( ctx, task, dayName, periodNumbers, options ) {
 }
 
 /** Find the highest-scoring valid slot for a task. */
-function findBestCandidateSlot( ctx, task, periodNumbers, options, maxTeacherPeriods, labBlockList, searchAllPeriods ) {
-    const { timetable, config } = ctx;
+function findBestCandidateSlot( timetable, task, periodNumbers, options, maxTeacherPeriods, labBlockList, searchAllPeriods ) {
     const candidates = [];
-    const periodsPerDay = config.periodsPerDay || 7;
+    const periodsPerDay = state.config.periodsPerDay || 7;
     const schoolDays = getStandardDayOrder( task.className );
     const slotPatterns = [];
 
@@ -2890,7 +2880,7 @@ function findBestCandidateSlot( ctx, task, periodNumbers, options, maxTeacherPer
 
     slotPatterns.forEach( ( { dayName, periodNumbers: nums } ) => {
         const validation = validateSlot(
-            ctx,
+            timetable,
             task.className,
             dayName,
             nums,
@@ -2900,7 +2890,6 @@ function findBestCandidateSlot( ctx, task, periodNumbers, options, maxTeacherPer
         if ( !validation.valid ) return;
 
         if ( exceedsDailySubjectLimit(
-            ctx,
             task.className,
             dayName,
             task.subject,
@@ -2913,7 +2902,7 @@ function findBestCandidateSlot( ctx, task, periodNumbers, options, maxTeacherPer
         candidates.push( {
             dayName,
             periodNumbers: nums,
-            score: scoreCandidateSlot( ctx, task, dayName, nums, options )
+            score: scoreCandidateSlot( timetable, task, dayName, nums, options )
         } );
     } );
 
@@ -2923,13 +2912,12 @@ function findBestCandidateSlot( ctx, task, periodNumbers, options, maxTeacherPer
 }
 
 /** Assign slot and update daily subject distribution trackers. */
-function assignSlotWithTracking( ctx, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId = null ) {
-    const { timetable, teacherBusy, teacherAssignments, assignmentMap } = ctx;
+function assignSlotWithTracking( timetable, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId = null ) {
     if ( !assignmentId ) {
         // Fallback to a deterministic assignmentId using teacher, class, day, and periods
         assignmentId = `auto-${toCleanString( teacherId )}-${className}-${dayName}-P${periodNumbers.join( '-' )}`;
     }
-    const success = assignSlot( ctx, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId );
+    const success = assignSlot( timetable, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId );
     if ( success ) {
         incrementDailySubjectCount( className, dayName, subject, periodNumbers.length );
         assertTeacherBusyTrackerMatchesTimetable(timetable, 'assignSlotWithTracking', teacherId, dayName, periodNumbers);
@@ -2937,8 +2925,7 @@ function assignSlotWithTracking( ctx, className, dayName, periodNumbers, teacher
     return success;
 }
 
-function unassignSlotWithTracking( ctx, className, dayName, periodNumbers, teacherId, subject, assignmentId ) {
-    const { timetable, teacherBusy, teacherAssignments, assignmentMap } = ctx;
+function unassignSlotWithTracking( timetable, className, dayName, periodNumbers, teacherId, subject, assignmentId ) {
     const tid = toCleanString( teacherId );
     const resolvedSubject = toCleanString( subject );
     periodNumbers.forEach( periodNumber => {
@@ -2948,7 +2935,7 @@ function unassignSlotWithTracking( ctx, className, dayName, periodNumbers, teach
         let resolvedAssignmentId = assignmentId || periodEntry.assignmentId;
         // Reorder atomic teardown: delete reverse map first, then set, then clear cell.
         if ( resolvedAssignmentId && teacherAssignments[tid] && teacherAssignments[tid].has( resolvedAssignmentId ) ) {
-            if ( assignmentMap ) assignmentMap.delete( resolvedAssignmentId );
+            if ( state.assignmentReverseMap ) state.assignmentReverseMap.delete( resolvedAssignmentId );
             teacherAssignments[tid].delete( resolvedAssignmentId );
         }
 
@@ -2957,8 +2944,8 @@ function unassignSlotWithTracking( ctx, className, dayName, periodNumbers, teach
         periodEntry.subject = '';
         periodEntry.assignmentId = null;
 
-        if ( teacherBusy[tid] ) {
-            teacherBusy[tid][`${dayName}-P${periodNumber}`] = false;
+        if ( teacherBusyTracker[tid] ) {
+            teacherBusyTracker[tid][`${dayName}-P${periodNumber}`] = false;
         }
     } );
 
@@ -3011,14 +2998,13 @@ function assertTeacherBusyTrackerMatchesTimetable(timetable, callerName, latestT
     }
 }
 
-function getTeacherLoad( ctx, teacherId ) {
-    const { teacherAssignments, assignmentMap } = ctx;
+function getTeacherLoad( teacherId ) {
     const tid = toCleanString( teacherId );
-    if ( !teacherAssignments || !teacherAssignments[tid] || !assignmentMap ) return 0;
+    if ( !teacherAssignments[tid] || !state.assignmentReverseMap ) return 0;
 
     let load = 0;
     for ( const assignmentId of teacherAssignments[tid] ) {
-        const assignment = assignmentMap.get( assignmentId );
+        const assignment = state.assignmentReverseMap.get( assignmentId );
         if ( assignment && Array.isArray( assignment.periods ) ) {
             load += assignment.periods.length;
         }
@@ -3026,28 +3012,25 @@ function getTeacherLoad( ctx, teacherId ) {
     return load;
 }
 
-/** Check if teacher is busy for a specific period. */
-function isTeacherBusy( ctx, teacherId, dayName, periodNumber ) {
-    const { teacherBusy } = ctx;
+function isTeacherBusy( teacherId, dayName, periodNumber ) {
     const tid = toCleanString( teacherId );
-    if ( !tid || !teacherBusy[tid] ) return false;
-    return !!teacherBusy[tid][`${dayName}-P${periodNumber}`];
+    if ( !tid || !teacherBusyTracker[tid] ) return false;
+    return !!teacherBusyTracker[tid][`${dayName}-P${periodNumber}`];
 }
 
 /** Check whether a class period cell can receive this teacher assignment. */
-function validateSlot( ctx, className, dayName, periodNumbers, teacherId, maxTeacherPeriods ) {
-    const { timetable, config } = ctx;
-    maxTeacherPeriods = maxTeacherPeriods || config.periodsPerTeacher || 35;
+function validateSlot( timetable, className, dayName, periodNumbers, teacherId, maxTeacherPeriods ) {
     const tid = toCleanString( teacherId );
+    if ( !tid || !className || !dayName || !periodNumbers || periodNumbers.length === 0 ) {
+        return { valid: false, reason: 'Missing slot data' };
+    }
 
-    if ( getTeacherLoad( ctx, tid ) + periodNumbers.length > maxTeacherPeriods ) {
-        return { valid: false, reason: `Teacher load exceeds max (${maxTeacherPeriods})` };
+    const classData = timetable[className];
+    if ( !classData || !Array.isArray( classData.days ) ) {
+        return { valid: false, reason: `Unknown class ${className}` };
     }
 
     for ( const periodNumber of periodNumbers ) {
-        if ( isTeacherBusy( ctx, tid, dayName, periodNumber ) ) {
-            return { valid: false, reason: `Teacher already busy on ${dayName} P${periodNumber}` };
-        }
         const periodEntry = getClassDayPeriod( timetable, className, dayName, periodNumber );
         if ( !periodEntry ) {
             return { valid: false, reason: `Invalid period P${periodNumber}` };
@@ -3058,6 +3041,13 @@ function validateSlot( ctx, className, dayName, periodNumbers, teacherId, maxTea
         if ( !isPeriodSlotEmpty( periodEntry ) ) {
             return { valid: false, reason: `Class slot occupied (${className}, ${dayName}, P${periodNumber})` };
         }
+        if ( isTeacherBusy( tid, dayName, periodNumber ) ) {
+            return { valid: false, reason: `Teacher busy (${tid}, ${dayName}, P${periodNumber})` };
+        }
+    }
+
+    if ( getTeacherLoad( tid ) + periodNumbers.length > maxTeacherPeriods ) {
+        return { valid: false, reason: `Teacher ${tid} exceeds max weekly periods` };
     }
 
     return { valid: true };
@@ -3068,8 +3058,7 @@ function validateSlot( ctx, className, dayName, periodNumbers, teacherId, maxTea
  * the entire write is rejected with no partial mutation — UNLESS the
  * busy slot already carries the same assignmentId (valid clubbed expansion).
  */
-function assignSlot( ctx, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId = null ) {
-    const { timetable, teacherBusy, teacherAssignments, assignmentMap } = ctx;
+function assignSlot( timetable, className, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId = null ) {
     const tid = toCleanString( teacherId );
     const resolvedTeacherName = teacherName || findTeacherNameById( tid );
     const resolvedSubject = toCleanString( subject );
@@ -3077,7 +3066,7 @@ function assignSlot( ctx, className, dayName, periodNumbers, teacherId, subject,
     // Atomic pre-check: reject if teacher is busy in any target period,
     // unless this is a clubbed expansion of the same assignmentId.
     for ( const periodNumber of periodNumbers ) {
-        if ( isTeacherBusy( ctx, tid, dayName, periodNumber ) ) {
+        if ( isTeacherBusy( tid, dayName, periodNumber ) ) {
             // Check whether this is a valid clubbed expansion
             const isClubbedExpansion = assignmentId && ( () => {
                 for ( const otherClass of Object.keys( timetable ) ) {
@@ -3117,16 +3106,16 @@ function assignSlot( ctx, className, dayName, periodNumbers, teacherId, subject,
         periodEntry.subject = resolvedSubject;
         periodEntry.assignmentId = assignmentId;
 
-        if ( !teacherBusy[tid] ) teacherBusy[tid] = {};
-        teacherBusy[tid][`${dayName}-P${periodNumber}`] = true;
+        if ( !teacherBusyTracker[tid] ) teacherBusyTracker[tid] = {};
+        teacherBusyTracker[tid][`${dayName}-P${periodNumber}`] = true;
     } );
 
     if ( assignmentId ) {
         if ( !teacherAssignments[tid] ) teacherAssignments[tid] = new Set();
         if ( !teacherAssignments[tid].has( assignmentId ) ) {
             teacherAssignments[tid].add( assignmentId );
-            if ( assignmentMap ) {
-                assignmentMap.set( assignmentId, {
+            if ( state.assignmentReverseMap ) {
+                state.assignmentReverseMap.set( assignmentId, {
                     teacherId: tid,
                     className,
                     dayName,
@@ -3264,24 +3253,24 @@ function getUniqueFixedGroups( task ) {
     } );
 }
 
-function canPlaceClassTeacherP1( ctx, className, dayName, teacherId, maxTeacherPeriods ) {
-    if ( classHasP1P2LabOnDay( ctx.timetable, className, dayName ) ) return false;
+function canPlaceClassTeacherP1( timetable, className, dayName, teacherId, maxTeacherPeriods ) {
+    if ( classHasP1P2LabOnDay( timetable, className, dayName ) ) return false;
 
-    const p1 = getClassDayPeriod( ctx.timetable, className, dayName, 1 );
+    const p1 = getClassDayPeriod( timetable, className, dayName, 1 );
     if ( !p1 ) return false;
     if ( !isPeriodSlotEmpty( p1 ) ) return false;
-    if ( isTeacherBusy( ctx, teacherId, dayName, 1 ) ) return false;
-    if ( getTeacherLoad( ctx, teacherId ) + 1 > maxTeacherPeriods ) return false;
+    if ( isTeacherBusy( teacherId, dayName, 1 ) ) return false;
+    if ( getTeacherLoad( teacherId ) + 1 > maxTeacherPeriods ) return false;
 
     return true;
 }
 
 /** Validation for fixed P1 assignment — allows reserved-but-empty locked slots. */
-function canAssignFixedP1Slot( ctx, className, dayName, periodNumber, teacherId, maxTeacherPeriods ) {
-    const periodEntry = getClassDayPeriod( ctx.timetable, className, dayName, periodNumber );
+function canAssignFixedP1Slot( timetable, className, dayName, periodNumber, teacherId, maxTeacherPeriods ) {
+    const periodEntry = getClassDayPeriod( timetable, className, dayName, periodNumber );
     if ( !periodEntry || !isPeriodSlotEmpty( periodEntry ) ) return false;
-    if ( isTeacherBusy( ctx, teacherId, dayName, periodNumber ) ) return false;
-    if ( getTeacherLoad( ctx, teacherId ) + 1 > maxTeacherPeriods ) return false;
+    if ( isTeacherBusy( teacherId, dayName, periodNumber ) ) return false;
+    if ( getTeacherLoad( teacherId ) + 1 > maxTeacherPeriods ) return false;
     return true;
 }
 
@@ -3759,17 +3748,12 @@ function buildSchedulingTasks( unresolvedOut = [] ) {
  * Creates a lightweight view object pointing at the existing global trackers.
  * No data is copied — mutations via assignSlotWithTracking are reflected here.
  */
-function prepareSchedulerContext( timetable, allTasks ) {
+function prepareSchedulerContext( timetable ) {
     return {
         timetable,
-        tasks: allTasks,
-        config: state.config || {},
-        teacherMappings: state.teacherMappings || [],
-        classSections: state.classSections || [],
-        teacherBusy: teacherBusyTracker,
-        teacherLoad: teacherLoadTracker,
-        teacherAssignments: teacherAssignments,
-        assignmentMap: state.assignmentReverseMap,
+        teacherBusy: teacherBusyTracker,          // existing global
+        teacherLoad: teacherAssignments,           // existing global
+        assignmentMap: state.assignmentReverseMap, // existing global
         teacherSlack: {},   // Phase 5 — populated by computeSlack()
         classSlack: {},     // Phase 5 — populated by computeSlack()
         taskCandidates: new Map() // Phase 1 — task → [{dayName, periodNumbers}]
@@ -3798,13 +3782,13 @@ function buildCandidateLists( tasks, ctx ) {
                 for ( let p = 1; p <= periodsPerDay; p++ ) {
                     const nums = [p];
                     const tid = toCleanString( task.teacherId );
-                    if ( isTeacherBusy( ctx, tid, dayName, p ) ) continue;
-                    if ( getTeacherLoad( ctx, tid ) + 1 > maxTeacherPeriods ) continue;
+                    if ( isTeacherBusy( tid, dayName, p ) ) continue;
+                    if ( getTeacherLoad( tid ) + 1 > maxTeacherPeriods ) continue;
                     let allClear = true;
                     for ( const cls of task.clubbedClasses ) {
-                        const v = validateSlot( ctx, cls, dayName, nums, tid, maxTeacherPeriods );
+                        const v = validateSlot( timetable, cls, dayName, nums, tid, maxTeacherPeriods );
                         if ( !v.valid ) { allClear = false; break; }
-                        if ( exceedsDailySubjectLimit( ctx, cls, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) { allClear = false; break; }
+                        if ( exceedsDailySubjectLimit( cls, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) { allClear = false; break; }
                     }
                     if ( allClear ) candidates.push( { dayName, periodNumbers: nums } );
                 }
@@ -3813,9 +3797,9 @@ function buildCandidateLists( tasks, ctx ) {
             schoolDays.forEach( dayName => {
                 for ( let p = 1; p <= periodsPerDay; p++ ) {
                     const nums = [p];
-                    const v = validateSlot( ctx, task.className, dayName, nums, task.teacherId, maxTeacherPeriods );
+                    const v = validateSlot( timetable, task.className, dayName, nums, task.teacherId, maxTeacherPeriods );
                     if ( !v.valid ) continue;
-                    if ( exceedsDailySubjectLimit( ctx, task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) continue;
+                    if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) continue;
                     candidates.push( { dayName, periodNumbers: nums } );
                 }
             } );
@@ -3866,7 +3850,8 @@ function computeSlack( tasks, ctx ) {
  * This keeps the candidate lists accurate without full recomputation.
  */
 function updateCandidatesAfterAssign( tid, className, dayName, periodNumber, tasks, ctx ) {
-    const affectedTasks = [];
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
+    const timetable = ctx.timetable;
 
     tasks.forEach( task => {
         if ( task.alreadyScheduled || task.periodsNeeded <= 0 ) return;
@@ -3876,17 +3861,27 @@ function updateCandidatesAfterAssign( tid, className, dayName, periodNumber, tas
             ? ( task.clubbedClasses || [] ).includes( className )
             : task.className === className;
 
-        if ( sharesTeacher || sharesClass ) {
-            affectedTasks.push(task);
-        }
-    } );
+        if ( !sharesTeacher && !sharesClass ) return;
 
-    if (affectedTasks.length > 0) {
-        // Fully rebuild candidates for affected tasks
-        buildCandidateLists( affectedTasks, ctx );
-        // Recompute slack for all tasks to ensure accurate tiebreaking
-        computeSlack( tasks, ctx );
-    }
+        // Rebuild only entries that involve the affected day/period
+        if ( !task.candidates ) task.candidates = [];
+        task.candidates = task.candidates.filter( c => {
+            if ( c.dayName !== dayName ) return true;
+            if ( !c.periodNumbers.includes( periodNumber ) ) return true;
+
+            // Re-validate this specific slot
+            if ( task.isClubbed && Array.isArray( task.clubbedClasses ) ) {
+                for ( const cls of task.clubbedClasses ) {
+                    const v = validateSlot( timetable, cls, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+                    if ( !v.valid ) return false;
+                }
+                return true;
+            }
+            const v = validateSlot( timetable, task.className, dayName, c.periodNumbers, taskTid, maxTeacherPeriods );
+            return v.valid;
+        } );
+        ctx.taskCandidates.set( task, task.candidates );
+    } );
 }
 
 /**
@@ -3943,7 +3938,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
 
             if ( isPeriodSlotEmpty( cell ) ) {
                 // Slot is empty but teacher is busy — teacher conflict
-                if ( !isTeacherBusy( ctx, tid, dayName, p ) ) continue; // already clean, would have been in candidates
+                if ( !isTeacherBusy( tid, dayName, p ) ) continue; // already clean, would have been in candidates
                 // Teacher is busy on this (day, period) for another class — try to find an alternate slot for that other class
                 // Find which class has this teacher blocked
                 let conflictClass = null;
@@ -3983,11 +3978,11 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                 };
 
                 // Unassign conflicting slot
-                unassignSlotWithTracking( ctx, conflictClass, dayName, [p], tid, savedSubject, savedId );
+                unassignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedId );
 
                 // Re-check if task can now go into this slot
-                const v = validateSlot( ctx, task.className, dayName, [p], tid, maxTeacherPeriods );
-                if ( v.valid && !exceedsDailySubjectLimit( ctx, task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
+                const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
                     // Find alternate home for displaced task
                     const altDays = getStandardDayOrder( conflictClass );
                     let displaced = false;
@@ -3995,10 +3990,10 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                     for ( const altDay of altDays ) {
                         for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
                             if ( altDay === dayName && ap === p ) continue;
-                            const av = validateSlot( ctx, conflictClass, altDay, [ap], tid, maxTeacherPeriods );
+                            const av = validateSlot( timetable, conflictClass, altDay, [ap], tid, maxTeacherPeriods );
                             if ( !av.valid ) continue;
-                            if ( exceedsDailySubjectLimit( ctx, conflictClass, altDay, savedSubject, 1, { isLabBlock: false, totalPeriodsNeeded: displacedTask._originalPeriods || displacedTask.periodsNeeded } ) ) continue;
-                            assignSlotWithTracking( ctx, conflictClass, altDay, [ap], tid, savedSubject, savedTeacher, savedId );
+                            if ( exceedsDailySubjectLimit( conflictClass, altDay, savedSubject, 1, { isLabBlock: false, totalPeriodsNeeded: displacedTask._originalPeriods || displacedTask.periodsNeeded } ) ) continue;
+                            assignSlotWithTracking( timetable, conflictClass, altDay, [ap], tid, savedSubject, savedTeacher, savedId );
                             displaced = true;
                             altSlotAssigned = { day: altDay, period: ap };
                             break;
@@ -4008,13 +4003,13 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
 
                     if ( displaced ) {
                         // Place the original task
-                        const ok = assignSlotWithTracking( ctx, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                        const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
                         if ( ok ) {
                             updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
                             return true;
                         } else {
                             // Rollback the displaced task assignment because the original task STILL couldn't fit!
-                            unassignSlotWithTracking( ctx, conflictClass, altSlotAssigned.day, [altSlotAssigned.period], tid, savedSubject, savedId );
+                            unassignSlotWithTracking( timetable, conflictClass, altSlotAssigned.day, [altSlotAssigned.period], tid, savedSubject, savedId );
                             displaced = false;
                         }
                     }
@@ -4025,7 +4020,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                         buildCandidateLists( [displacedTask], ctx );
                         const deeper = recursiveRepair( displacedTask, allMrvTasks, ctx, depth + 1, maxDepth );
                         if ( deeper ) {
-                            const ok2 = assignSlotWithTracking( ctx, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            const ok2 = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
                             if ( ok2 ) {
                                 updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
                                 return true;
@@ -4035,7 +4030,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                 }
 
                 // Restore conflict slot (repair failed)
-                assignSlotWithTracking( ctx, conflictClass, dayName, [p], tid, savedSubject, savedTeacher, savedId );
+                assignSlotWithTracking( timetable, conflictClass, dayName, [p], tid, savedSubject, savedTeacher, savedId );
 
             } else {
                 // Slot is occupied by someone else — teacher is free but class slot is full
@@ -4059,12 +4054,12 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                     })()
                 };
 
-                if ( !isTeacherBusy( ctx, tid, dayName, p ) ) {
+                if ( !isTeacherBusy( tid, dayName, p ) ) {
                     // Teacher IS free but class slot is occupied — evict occupant
-                    unassignSlotWithTracking( ctx, task.className, dayName, [p], occupantTid, savedSubject, savedId );
+                    unassignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedId );
 
-                    const v = validateSlot( ctx, task.className, dayName, [p], tid, maxTeacherPeriods );
-                    if ( v.valid && !exceedsDailySubjectLimit( ctx, task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
+                    const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
+                    if ( v.valid && !exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: false, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
                         // Find alternate home for evicted occupant
                         const altDays = getStandardDayOrder( task.className );
                         let evicted = false;
@@ -4072,10 +4067,10 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                         for ( const altDay of altDays ) {
                             for ( let ap = 1; ap <= periodsPerDay; ap++ ) {
                                 if ( altDay === dayName && ap === p ) continue;
-                                const av = validateSlot( ctx, task.className, altDay, [ap], occupantTid, maxTeacherPeriods );
+                                const av = validateSlot( timetable, task.className, altDay, [ap], occupantTid, maxTeacherPeriods );
                                 if ( !av.valid ) continue;
-                                if ( exceedsDailySubjectLimit( ctx, task.className, altDay, savedSubject, 1, { isLabBlock: false, totalPeriodsNeeded: displacedTask2._originalPeriods || displacedTask2.periodsNeeded } ) ) continue;
-                                assignSlotWithTracking( ctx, task.className, altDay, [ap], occupantTid, savedSubject, savedName, savedId );
+                                if ( exceedsDailySubjectLimit( task.className, altDay, savedSubject, 1, { isLabBlock: false, totalPeriodsNeeded: displacedTask2._originalPeriods || displacedTask2.periodsNeeded } ) ) continue;
+                                assignSlotWithTracking( timetable, task.className, altDay, [ap], occupantTid, savedSubject, savedName, savedId );
                                 evicted = true;
                                 altSlotAssigned = { day: altDay, period: ap };
                                 break;
@@ -4084,13 +4079,13 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                         }
 
                         if ( evicted ) {
-                            const ok = assignSlotWithTracking( ctx, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                            const ok = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
                             if ( ok ) {
                                 updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
                                 return true;
                             } else {
                                 // Rollback the displaced task assignment because the original task STILL couldn't fit!
-                                unassignSlotWithTracking( ctx, task.className, altSlotAssigned.day, [altSlotAssigned.period], occupantTid, savedSubject, savedId );
+                                unassignSlotWithTracking( timetable, task.className, altSlotAssigned.day, [altSlotAssigned.period], occupantTid, savedSubject, savedId );
                                 evicted = false;
                             }
                         }
@@ -4100,7 +4095,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                             buildCandidateLists( [displacedTask2], ctx );
                             evicted = recursiveRepair( displacedTask2, allMrvTasks, ctx, depth + 1, maxDepth );
                             if ( evicted ) {
-                                const ok2 = assignSlotWithTracking( ctx, task.className, dayName, [p], tid, task.subject, task.teacherName );
+                                const ok2 = assignSlotWithTracking( timetable, task.className, dayName, [p], tid, task.subject, task.teacherName );
                                 if ( ok2 ) {
                                     updateCandidatesAfterAssign( tid, task.className, dayName, p, allMrvTasks, ctx );
                                     return true;
@@ -4109,7 +4104,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
                         }
                     }
                     // Restore evicted slot
-                    assignSlotWithTracking( ctx, task.className, dayName, [p], occupantTid, savedSubject, savedName, savedId );
+                    assignSlotWithTracking( timetable, task.className, dayName, [p], occupantTid, savedSubject, savedName, savedId );
                 }
             }
         }
@@ -4130,7 +4125,7 @@ function recursiveRepair( task, allMrvTasks, ctx, depth, maxDepth ) {
 function runMRVScheduler( tasks, ctx, unscheduled ) {
     const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     const timetable = ctx.timetable;
-    const REPAIR_DEPTH = 4;
+    const REPAIR_DEPTH = 3;
 
     // Filter to only tasks this scheduler handles (normal + combined, not fixed/lab/csl)
     const mrvTasks = tasks.filter( t =>
@@ -4180,7 +4175,7 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
         const scoredCandidates = ( task.candidates || [] )
             .map( c => ( {
                 ...c,
-                score: scoreCandidateSlot( ctx, task, c.dayName, c.periodNumbers, {
+                score: scoreCandidateSlot( timetable, task, c.dayName, c.periodNumbers, {
                     preferFixedPeriods: false,
                     isLabBlock: task.isLabSubject,
                     teacherSlack: ctx.teacherSlack[tid] || 0,
@@ -4200,16 +4195,16 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
             let vOk = true;
             if ( task.isClubbed && task.clubbedClasses ) {
                 for ( const cls of task.clubbedClasses ) {
-                    const v = validateSlot( ctx, cls, dayName, periodNumbers, tid, maxTeacherPeriods );
+                    const v = validateSlot( timetable, cls, dayName, periodNumbers, tid, maxTeacherPeriods );
                     if ( !v.valid ) { vOk = false; break; }
                 }
             } else {
-                const v = validateSlot( ctx, task.className, dayName, periodNumbers, tid, maxTeacherPeriods );
+                const v = validateSlot( timetable, task.className, dayName, periodNumbers, tid, maxTeacherPeriods );
                 if ( !v.valid ) vOk = false;
             }
             if ( !vOk ) continue;
             
-            if ( exceedsDailySubjectLimit( ctx, task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) continue;
+            if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) continue;
 
             // Check locked/break cells for combined tasks
             if ( task.isClubbed && task.clubbedClasses ) {
@@ -4225,12 +4220,12 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
                 let allOk = true;
                 let classNamesAssigned = [];
                 for ( const cls of task.clubbedClasses ) {
-                    const ok = assignSlotWithTracking( ctx, cls, dayName, periodNumbers, tid, task.subject, task.teacherName, assignmentId );
+                    const ok = assignSlotWithTracking( timetable, cls, dayName, periodNumbers, tid, task.subject, task.teacherName, assignmentId );
                     if ( !ok ) { 
                         allOk = false; 
                         // ROLLBACK partial assignments!
                         for ( const rollbackCls of classNamesAssigned ) {
-                            unassignSlotWithTracking( ctx, rollbackCls, dayName, periodNumbers, tid, task.subject, assignmentId );
+                            unassignSlotWithTracking( timetable, rollbackCls, dayName, periodNumbers, tid, task.subject, assignmentId );
                         }
                         break; 
                     }
@@ -4252,7 +4247,7 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
                     break;
                 }
             } else {
-                const ok = assignSlotWithTracking( ctx, task.className, dayName, periodNumbers, tid, task.subject, task.teacherName );
+                const ok = assignSlotWithTracking( timetable, task.className, dayName, periodNumbers, tid, task.subject, task.teacherName );
                 if ( ok ) {
                     task.periodsNeeded -= 1;
                     if ( task.periodsNeeded <= 0 ) task.alreadyScheduled = true;
@@ -4287,11 +4282,11 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
 
                 schoolDays.forEach( dayName => {
                     for ( let p = 1; p <= periodsPerDay; p++ ) {
-                        const v = validateSlot( ctx, task.className, dayName, [p], tid, maxTeacherPeriods );
+                        const v = validateSlot( timetable, task.className, dayName, [p], tid, maxTeacherPeriods );
                         let reason = "";
                         if ( !v.valid ) {
                             reason = v.reason;
-                        } else if ( exceedsDailySubjectLimit( ctx, task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
+                        } else if ( exceedsDailySubjectLimit( task.className, dayName, task.subject, 1, { isLabBlock: task.isLabSubject, totalPeriodsNeeded: task._originalPeriods || task.periodsNeeded } ) ) {
                             reason = "Subject spread limit reached";
                         } else {
                             reason = "Locked or blocked by forward-checking";
@@ -4315,7 +4310,7 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
                     reason: 'No valid candidate slots after MRV + forward checking + repair',
                     candidateCount: ( task.candidates || [] ).length,
                     blockedSlots: blockedSlots.slice( 0, 10 ),
-                    diagnostics: reasonCounts
+                    diagnostics: blockedSlots.slice( 0, 10 )
                 } );
                 task.alreadyScheduled = true; // prevent infinite loop
                 mrvStats.failed++;
@@ -4352,8 +4347,7 @@ function runMRVScheduler( tasks, ctx, unscheduled ) {
 // END MRV ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
 
-function findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, labBlockList ) {
-    const { timetable, config } = ctx;
+function findBestClubbedCandidateSlot( timetable, task, maxTeacherPeriods, labBlockList ) {
     const candidates = [];
     const schoolDays = getStandardDayOrder( task.className );
     const slotPatterns = [];
@@ -4363,7 +4357,7 @@ function findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, labBlockLis
             labBlockList.forEach( block => slotPatterns.push( { dayName, periodNumbers: block } ) );
         } );
     } else {
-        const periodsPerDay = config.periodsPerDay || 7;
+        const periodsPerDay = state.config.periodsPerDay || 7;
         schoolDays.forEach( dayName => {
             for ( let periodNumber = 1; periodNumber <= periodsPerDay; periodNumber++ ) {
                 slotPatterns.push( { dayName, periodNumbers: [periodNumber] } );
@@ -4375,13 +4369,13 @@ function findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, labBlockLis
         const tid = toCleanString( task.teacherId );
         let valid = true;
 
-        if ( getTeacherLoad( ctx, tid ) + nums.length > maxTeacherPeriods ) {
+        if ( getTeacherLoad( tid ) + nums.length > maxTeacherPeriods ) {
             valid = false;
         }
 
         if ( valid ) {
             for ( const periodNumber of nums ) {
-                if ( isTeacherBusy( ctx, tid, dayName, periodNumber ) ) {
+                if ( isTeacherBusy( tid, dayName, periodNumber ) ) {
                     valid = false;
                     break;
                 }
@@ -4406,7 +4400,6 @@ function findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, labBlockLis
                 if ( !valid ) break;
 
                 if ( exceedsDailySubjectLimit(
-                    ctx,
                     className,
                     dayName,
                     task.subject,
@@ -4423,7 +4416,7 @@ function findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, labBlockLis
             let totalScore = 0;
             task.clubbedClasses.forEach( className => {
                 const tempTask = { ...task, className };
-                totalScore += scoreCandidateSlot( ctx, tempTask, dayName, nums, { isLabBlock: true } );
+                totalScore += scoreCandidateSlot( timetable, tempTask, dayName, nums, { isLabBlock: true } );
             } );
 
             candidates.push( {
@@ -4467,9 +4460,8 @@ const CSL_FIXED_SCHEDULE = {
     ]
 };
 
-function scheduleFixedCslLabs( ctx, cslTasks, unscheduled ) {
-    const { timetable, config, teacherLoad } = ctx;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function scheduleFixedCslLabs( timetable, cslTasks, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
 
     Object.entries( CSL_FIXED_SCHEDULE ).forEach( ( [key, slots] ) => {
         const [teacherPrefix, classStr] = key.split( '|' );
@@ -4524,7 +4516,7 @@ function scheduleFixedCslLabs( ctx, cslTasks, unscheduled ) {
 
             let allFree = true;
             for ( const cls of classNames ) {
-                const validation = validateSlot( ctx, cls, dayName, periodNumbers, teacherId, maxTeacherPeriods );
+                const validation = validateSlot( timetable, cls, dayName, periodNumbers, teacherId, maxTeacherPeriods );
                 if ( !validation.valid ) {
                     allFree = false;
                     break;
@@ -4537,11 +4529,11 @@ function scheduleFixedCslLabs( ctx, cslTasks, unscheduled ) {
 
                 classNames.forEach( ( cls, idx ) => {
                     if ( !blockSuccess ) return;
-                    const success = assignSlotWithTracking( ctx, cls, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId );
+                    const success = assignSlotWithTracking( timetable, cls, dayName, periodNumbers, teacherId, subject, teacherName, assignmentId );
                     if ( !success ) {
                         blockSuccess = false;
                         for ( let i = 0; i < idx; i++ ) {
-                            unassignSlotWithTracking( ctx, classNames[i], dayName, periodNumbers, teacherId, subject, assignmentId );
+                            unassignSlotWithTracking( timetable, classNames[i], dayName, periodNumbers, teacherId, subject, assignmentId );
                         }
                     }
                 } );
@@ -4574,10 +4566,9 @@ function scheduleFixedCslLabs( ctx, cslTasks, unscheduled ) {
     } );
 }
 
-function scheduleLabBlock( ctx, task, unscheduled ) {
-    const { timetable, config } = ctx;
+function scheduleLabBlock( timetable, task, unscheduled ) {
     if ( task.alreadyScheduled ) return;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     let remaining = task.periodsNeeded;
 
     const preferredBlocks = getLabBlocks();
@@ -4588,10 +4579,10 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
         let best = null;
 
         if ( task.isClubbed ) {
-            best = findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, [block] );
+            best = findBestClubbedCandidateSlot( timetable, task, maxTeacherPeriods, [block] );
         } else {
             best = findBestCandidateSlot(
-                ctx,
+                timetable,
                 task,
                 null,
                 { isLabBlock: true, preferFixedPeriods: true },
@@ -4617,7 +4608,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
             task.clubbedClasses.forEach( ( className, idx ) => {
                 if ( !blockSuccess ) return;
                 const success = assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     className,
                     best.dayName,
                     best.periodNumbers,
@@ -4629,7 +4620,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
                 if ( !success ) {
                     blockSuccess = false;
                     for ( let i = 0; i < idx; i++ ) {
-                        unassignSlotWithTracking( ctx, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, 'CSL', assignmentId );
+                        unassignSlotWithTracking( timetable, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, 'CSL', assignmentId );
                     }
                 }
             } );
@@ -4652,7 +4643,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
             if ( blockHasLockedSlot ) continue;
 
             const success = assignSlotWithTracking(
-                ctx,
+                timetable,
                 task.className,
                 best.dayName,
                 best.periodNumbers,
@@ -4675,10 +4666,10 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
         let best = null;
 
         if ( task.isClubbed ) {
-            best = findBestClubbedCandidateSlot( ctx, task, maxTeacherPeriods, getLabBlocks() );
+            best = findBestClubbedCandidateSlot( timetable, task, maxTeacherPeriods, getLabBlocks() );
         } else {
             best = findBestCandidateSlot(
-                ctx,
+                timetable,
                 task,
                 null,
                 { isLabBlock: true },
@@ -4695,7 +4686,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
             task.clubbedClasses.forEach( ( className, idx ) => {
                 if ( !blockSuccess ) return;
                 const success = assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     className,
                     best.dayName,
                     best.periodNumbers,
@@ -4707,7 +4698,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
                 if ( !success ) {
                     blockSuccess = false;
                     for ( let i = 0; i < idx; i++ ) {
-                        unassignSlotWithTracking( ctx, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, 'CSL', assignmentId );
+                        unassignSlotWithTracking( timetable, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, 'CSL', assignmentId );
                     }
                 }
             } );
@@ -4722,7 +4713,7 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
             }
         } else {
             const success = assignSlotWithTracking(
-                ctx,
+                timetable,
                 task.className,
                 best.dayName,
                 best.periodNumbers,
@@ -4754,9 +4745,8 @@ function scheduleLabBlock( ctx, task, unscheduled ) {
     }
 }
 
-function scheduleClassTeacherP1AfterLabs( ctx, tasks, unscheduled ) {
-    const { timetable, config } = ctx;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function scheduleClassTeacherP1AfterLabs( timetable, tasks, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     tasks.forEach( task => {
         const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
@@ -4768,12 +4758,12 @@ function scheduleClassTeacherP1AfterLabs( ctx, tasks, unscheduled ) {
         schoolDays.forEach( dayName => {
             if ( remaining <= 0 ) return;
 
-            if ( !canPlaceClassTeacherP1( ctx, task.className, dayName, task.teacherId, maxTeacherPeriods ) ) {
+            if ( !canPlaceClassTeacherP1( timetable, task.className, dayName, task.teacherId, maxTeacherPeriods ) ) {
                 return;
             }
 
             assignSlotWithTracking(
-                ctx,
+                timetable,
                 task.className,
                 dayName,
                 [1],
@@ -4804,9 +4794,8 @@ function scheduleClassTeacherP1AfterLabs( ctx, tasks, unscheduled ) {
 }
 
 /** Schedule all fixed-period mappings first (class-teacher P1 slots, etc.). */
-function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
-    const { timetable, config } = ctx;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function scheduleFixedTasks( timetable, tasks, deferredTasks, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     tasks.forEach( task => {
         const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
@@ -4841,7 +4830,7 @@ function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                         if ( !periodEntry || periodEntry.isLocked || !isPeriodSlotEmpty( periodEntry ) ) continue;
 
                         const validation = validateSlot(
-                            ctx,
+                            timetable,
                             task.className,
                             dayName,
                             [periodNumber],
@@ -4852,7 +4841,7 @@ function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                         if ( !validation.valid ) continue;
 
                         const success = assignSlotWithTracking(
-                            ctx,
+                            timetable,
                             task.className,
                             dayName,
                             [periodNumber],
@@ -4869,7 +4858,7 @@ function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                     }
                 } else {
                     const best = findBestCandidateSlot(
-                        ctx,
+                        timetable,
                         task,
                         periodNumbers,
                         { preferFixedPeriods: true, isLabBlock: periodNumbers.length > 1 },
@@ -4879,7 +4868,7 @@ function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                     if ( !best ) continue;
 
                     const success = assignSlotWithTracking(
-                        ctx,
+                        timetable,
                         task.className,
                         best.dayName,
                         best.periodNumbers,
@@ -4924,9 +4913,8 @@ function scheduleFixedTasks( ctx, tasks, deferredTasks, unscheduled ) {
 }
 
 /** Schedule fixed-period tasks that are also combined classes. */
-function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
-    const { timetable, config } = ctx;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function scheduleFixedCombinedTasks( timetable, tasks, deferredTasks, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     tasks.forEach( task => {
         const schoolDays = getStandardDayOrder( task.className );
         if ( task.alreadyScheduled ) return;
@@ -4954,7 +4942,7 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
 
                         if ( !allAvailable ) continue;
 
-                        if ( !canAssignFixedP1Slot( ctx, task.clubbedClasses[0], dayName, 1, task.teacherId, maxTeacherPeriods ) ) {
+                        if ( !canAssignFixedP1Slot( timetable, task.clubbedClasses[0], dayName, 1, task.teacherId, maxTeacherPeriods ) ) {
                             continue;
                         }
 
@@ -4962,11 +4950,11 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                         let blockSuccess = true;
                         task.clubbedClasses.forEach( ( className, idx ) => {
                             if ( !blockSuccess ) return;
-                            const success = assignSlotWithTracking( ctx, className, dayName, [1], task.teacherId, task.subject, task.teacherName, assignmentId );
+                            const success = assignSlotWithTracking( timetable, className, dayName, [1], task.teacherId, task.subject, task.teacherName, assignmentId );
                             if ( !success ) {
                                 blockSuccess = false;
                                 for ( let i = 0; i < idx; i++ ) {
-                                    unassignSlotWithTracking( ctx, task.clubbedClasses[i], dayName, [1], task.teacherId, task.subject, assignmentId );
+                                    unassignSlotWithTracking( timetable, task.clubbedClasses[i], dayName, [1], task.teacherId, task.subject, assignmentId );
                                 }
                             }
                         } );
@@ -4993,18 +4981,18 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
 
                         if ( !allAvailable ) continue;
 
-                        const validation = validateSlot( ctx, task.clubbedClasses[0], dayName, [periodNumber], task.teacherId, maxTeacherPeriods );
+                        const validation = validateSlot( timetable, task.clubbedClasses[0], dayName, [periodNumber], task.teacherId, maxTeacherPeriods );
                         if ( !validation.valid ) continue;
 
                         const assignmentId = `fc-${task.mappingIndex}-${dayName}-P${periodNumber}`;
                         let blockSuccess = true;
                         task.clubbedClasses.forEach( ( className, idx ) => {
                             if ( !blockSuccess ) return;
-                            const success = assignSlotWithTracking( ctx, className, dayName, [periodNumber], task.teacherId, task.subject, task.teacherName, assignmentId );
+                            const success = assignSlotWithTracking( timetable, className, dayName, [periodNumber], task.teacherId, task.subject, task.teacherName, assignmentId );
                             if ( !success ) {
                                 blockSuccess = false;
                                 for ( let i = 0; i < idx; i++ ) {
-                                    unassignSlotWithTracking( ctx, task.clubbedClasses[i], dayName, [periodNumber], task.teacherId, task.subject, assignmentId );
+                                    unassignSlotWithTracking( timetable, task.clubbedClasses[i], dayName, [periodNumber], task.teacherId, task.subject, assignmentId );
                                 }
                             }
                         } );
@@ -5021,7 +5009,7 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                     }
                 } else {
                     const best = findBestClubbedCandidateSlot(
-                        ctx,
+                        timetable,
                         task,
                         maxTeacherPeriods,
                         [periodNumbers]
@@ -5033,11 +5021,11 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
                     let blockSuccess = true;
                     task.clubbedClasses.forEach( ( className, idx ) => {
                         if ( !blockSuccess ) return;
-                        const success = assignSlotWithTracking( ctx, className, best.dayName, best.periodNumbers, task.teacherId, task.subject, task.teacherName, assignmentId );
+                        const success = assignSlotWithTracking( timetable, className, best.dayName, best.periodNumbers, task.teacherId, task.subject, task.teacherName, assignmentId );
                         if ( !success ) {
                             blockSuccess = false;
                             for ( let i = 0; i < idx; i++ ) {
-                                unassignSlotWithTracking( ctx, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, task.subject, assignmentId );
+                                unassignSlotWithTracking( timetable, task.clubbedClasses[i], best.dayName, best.periodNumbers, task.teacherId, task.subject, assignmentId );
                             }
                         }
                     } );
@@ -5084,15 +5072,14 @@ function scheduleFixedCombinedTasks( ctx, tasks, deferredTasks, unscheduled ) {
     } );
 }
 
-function scheduleCombinedTask( ctx, task, unscheduled ) {
-    const { timetable, config } = ctx;
+function scheduleCombinedTask( timetable, task, unscheduled ) {
     if ( task.alreadyScheduled ) return;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     let remaining = task.periodsNeeded;
 
     while ( remaining > 0 ) {
         let best = findBestClubbedCandidateSlot(
-            ctx,
+            timetable,
             task,
             maxTeacherPeriods,
             [] // empty list generates 1-period slots
@@ -5111,7 +5098,7 @@ function scheduleCombinedTask( ctx, task, unscheduled ) {
         const assignmentId = `c-${task.mappingIndex}-${remaining}`;
         task.clubbedClasses.forEach( ( className, idx ) => {
             assignSlotWithTracking(
-                ctx,
+                timetable,
                 className,
                 best.dayName,
                 best.periodNumbers,
@@ -5136,15 +5123,14 @@ function scheduleCombinedTask( ctx, task, unscheduled ) {
 }
 
 /** Score-based scheduling for regular (non-lab) subjects. */
-function scheduleNormalTask( ctx, task, unscheduled ) {
-    const { timetable, config } = ctx;
+function scheduleNormalTask( timetable, task, unscheduled ) {
     if ( task.alreadyScheduled ) return;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     let remaining = task.periodsNeeded;
 
     while ( remaining > 0 ) {
         const best = findBestCandidateSlot(
-            ctx,
+            timetable,
             task,
             null,
             {},
@@ -5163,13 +5149,13 @@ function scheduleNormalTask( ctx, task, unscheduled ) {
             console.warn(`\nRejected:`);
             
             const schoolDays = getStandardDayOrder(task.className);
-            const periodsPerDay = config.periodsPerDay || 7;
+            const periodsPerDay = state.config.periodsPerDay || 7;
             schoolDays.forEach(dayName => {
                 for(let p = 1; p <= periodsPerDay; p++) {
-                    const validation = validateSlot(ctx, task.className, dayName, [p], task.teacherId, maxTeacherPeriods);
+                    const validation = validateSlot(timetable, task.className, dayName, [p], task.teacherId, maxTeacherPeriods);
                     if (!validation.valid) {
                         console.warn(`${dayName} P${p} -> ${validation.reason}`);
-                    } else if (exceedsDailySubjectLimit(ctx, task.className, dayName, task.subject, 1, { isLabBlock: false })) {
+                    } else if (exceedsDailySubjectLimit(task.className, dayName, task.subject, 1, { isLabBlock: false })) {
                         console.warn(`${dayName} P${p} -> Subject spread limit reached`);
                     } else {
                         const cell = getClassDayPeriod(timetable, task.className, dayName, p);
@@ -5193,7 +5179,7 @@ function scheduleNormalTask( ctx, task, unscheduled ) {
         if ( slotHasLockedPeriod ) continue;
 
         assignSlotWithTracking(
-            ctx,
+            timetable,
             task.className,
             best.dayName,
             best.periodNumbers,
@@ -5252,8 +5238,7 @@ function showTimetableGenerationStatus( classCount, unscheduled ) {
     }
 }
 
-function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
-    const { timetable, config } = ctx;
+function trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContext ) {
     attemptContext.count++;
     if ( attemptContext.count > attemptContext.max ) {
         attemptContext.diagnostics.push( `Aborted for ${retryTask.teacherId} (${retryTask.className}): max swap attempts reached (${attemptContext.max}).` );
@@ -5277,7 +5262,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             if ( !currentTeacherId || !currentSubject ) continue;
 
             const canPlaceRetry = validateSlot(
-                ctx,
+                timetable,
                 retryTask.className,
                 day.dayName,
                 [slot.period],
@@ -5304,11 +5289,11 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             const savedAssignmentId = slot.assignmentId;
 
             // Unassign correctly to clear trackers
-            unassignSlotWithTracking( ctx, retryTask.className, day.dayName, [slot.period], currentTeacherId, currentSubject, savedAssignmentId );
+            unassignSlotWithTracking( timetable, retryTask.className, day.dayName, [slot.period], currentTeacherId, currentSubject, savedAssignmentId );
             slot.isLocked = true;
 
             const newHome = findBestCandidateSlot(
-                ctx,
+                timetable,
                 displacedTask,
                 null,
                 { preferFixedPeriods: false, isLabBlock: false },
@@ -5321,7 +5306,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             if ( newHome ) {
                 attemptContext.diagnostics.push( `Success! Displaced ${currentTeacherId} to ${newHome.dayName}-P${newHome.periodNumbers.join( '-' )}` );
                 assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     displacedTask.className,
                     newHome.dayName,
                     newHome.periodNumbers,
@@ -5330,7 +5315,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
                     displacedTask.teacherName
                 );
                 success = true;
-            } else if ( trySwapAndPlace( ctx, displacedTask, maxTeacherPeriods, attemptContext ) ) {
+            } else if ( trySwapAndPlace( timetable, displacedTask, maxTeacherPeriods, attemptContext ) ) {
                 success = true;
             }
 
@@ -5338,7 +5323,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
 
             if ( success ) {
                 assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     retryTask.className,
                     day.dayName,
                     [slot.period],
@@ -5350,7 +5335,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             }
 
             // Restore if failed
-            assignSlotWithTracking( ctx, retryTask.className, day.dayName, [slot.period], currentTeacherId, currentSubject, savedTeacherName, savedAssignmentId );
+            assignSlotWithTracking( timetable, retryTask.className, day.dayName, [slot.period], currentTeacherId, currentSubject, savedTeacherName, savedAssignmentId );
         }
     }
 
@@ -5363,7 +5348,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             if ( currentTeacherId ) continue; // Only look at empty slots
 
             const tid = toCleanString( retryTask.teacherId );
-            if ( !isTeacherBusy( ctx, tid, day.dayName, slot.period ) ) continue;
+            if ( !isTeacherBusy( tid, day.dayName, slot.period ) ) continue;
 
             // Teacher is busy in another class. Find where.
             let conflictingClass = null;
@@ -5398,11 +5383,11 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             const savedName = toCleanString( conflictingSlot.teacherName );
             const savedAssignmentId = conflictingSlot.assignmentId;
 
-            unassignSlotWithTracking( ctx, conflictingClass, day.dayName, [slot.period], tid, savedSubject, savedAssignmentId );
+            unassignSlotWithTracking( timetable, conflictingClass, day.dayName, [slot.period], tid, savedSubject, savedAssignmentId );
             conflictingSlot.isLocked = true;
 
             const newHome = findBestCandidateSlot(
-                ctx,
+                timetable,
                 displacedTask,
                 null,
                 { preferFixedPeriods: false, isLabBlock: false },
@@ -5414,7 +5399,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             let success = false;
             if ( newHome ) {
                 assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     displacedTask.className,
                     newHome.dayName,
                     newHome.periodNumbers,
@@ -5423,7 +5408,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
                     displacedTask.teacherName
                 );
                 success = true;
-            } else if ( trySwapAndPlace( ctx, displacedTask, maxTeacherPeriods, attemptContext ) ) {
+            } else if ( trySwapAndPlace( timetable, displacedTask, maxTeacherPeriods, attemptContext ) ) {
                 success = true;
             }
 
@@ -5431,7 +5416,7 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
 
             if ( success ) {
                 assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     retryTask.className,
                     day.dayName,
                     [slot.period],
@@ -5443,16 +5428,15 @@ function trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) {
             }
 
             // Restore
-            assignSlotWithTracking( ctx, conflictingClass, day.dayName, [slot.period], tid, savedSubject, savedName, savedAssignmentId );
+            assignSlotWithTracking( timetable, conflictingClass, day.dayName, [slot.period], tid, savedSubject, savedName, savedAssignmentId );
         }
     }
 
     return false;
 }
 
-function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
-    const { timetable, config } = ctx;
-    const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function fillRemainingEmptyTeachingSlots( timetable, unscheduled ) {
+    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
     const stillUnscheduled = [];
 
     unscheduled.forEach( item => {
@@ -5480,7 +5464,7 @@ function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
 
         while ( remaining > 0 ) {
             const best = findBestCandidateSlot(
-                ctx,
+                timetable,
                 retryTask,
                 null,
                 { preferFixedPeriods: false, isLabBlock: false },
@@ -5490,7 +5474,7 @@ function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
             );
 
             if ( !best ) {
-                if ( trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) ) {
+                if ( trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContext ) ) {
                     remaining -= 1;
                     continue;
                 }
@@ -5505,7 +5489,7 @@ function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
             );
 
             if ( !periodEntry || periodEntry.isLocked || periodEntry.type === 'Break' ) {
-                if ( trySwapAndPlace( ctx, retryTask, maxTeacherPeriods, attemptContext ) ) {
+                if ( trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContext ) ) {
                     remaining -= 1;
                     continue;
                 }
@@ -5513,7 +5497,7 @@ function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
             }
 
             assignSlotWithTracking(
-                ctx,
+                timetable,
                 retryTask.className,
                 best.dayName,
                 best.periodNumbers,
@@ -5539,9 +5523,8 @@ function fillRemainingEmptyTeachingSlots( ctx, unscheduled ) {
     return stillUnscheduled;
 }
 
-function findBestCandidateForSingleCell(ctx, className, dayName, period, tasks) {
-  const { timetable, config } = ctx;
-  const maxTeacherPeriods = config.periodsPerTeacher || 35;
+function findBestCandidateForSingleCell(timetable, className, dayName, period, tasks) {
+  const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
   let best = null;
   let bestScore = -Infinity;
 
@@ -5550,11 +5533,11 @@ function findBestCandidateForSingleCell(ctx, className, dayName, period, tasks) 
     if (task.isFixedSlotTask) continue;
     if (task.className !== className) continue;
 
-    const valid = validateSlot(ctx, className, dayName, [period], task.teacherId, maxTeacherPeriods);
+    const valid = validateSlot(timetable, className, dayName, [period], task.teacherId, maxTeacherPeriods);
     if (!valid.valid) continue;
-    if (exceedsDailySubjectLimit(ctx, className, dayName, task.subject, 1, { isLabBlock: false })) continue;
+    if (exceedsDailySubjectLimit(className, dayName, task.subject, 1, { isLabBlock: false })) continue;
 
-    const score = task.periodsUnscheduled * 10 - getTeacherLoad(ctx, task.teacherId);
+    const score = task.periodsUnscheduled * 10 - getTeacherLoad(task.teacherId);
     if (score > bestScore) {
       bestScore = score;
       best = task;
@@ -5564,9 +5547,8 @@ function findBestCandidateForSingleCell(ctx, className, dayName, period, tasks) 
   return best;
 }
 
-function fillAllEmptyPeriods( ctx, remainingTasks ) {
-    const { timetable, config } = ctx;
-    const periodsPerDay = config.periodsPerDay || 7;
+function fillAllEmptyPeriods( timetable, remainingTasks ) {
+    const periodsPerDay = state.config.periodsPerDay || 7;
 
     for ( const className of Object.keys( timetable ) ) {
         const classDays = getStandardDayOrder( className );
@@ -5576,7 +5558,7 @@ function fillAllEmptyPeriods( ctx, remainingTasks ) {
                 if ( !cell || cell.isLocked || !isPeriodSlotEmpty( cell ) ) continue;
 
                 const candidate = findBestCandidateForSingleCell(
-                    ctx,
+                    timetable,
                     className,
                     dayName,
                     p,
@@ -5586,7 +5568,7 @@ function fillAllEmptyPeriods( ctx, remainingTasks ) {
                 if ( !candidate ) continue;
 
                 const ok = assignSlotWithTracking(
-                    ctx,
+                    timetable,
                     className,
                     dayName,
                     [p],
@@ -5939,27 +5921,26 @@ function generateTimetable() {
         }
     }
 
-    const ctx = prepareSchedulerContext( timetable, allTasks );
-
     // ── PHASE A: Fixed/CSL/Lab (unchanged legacy scheduling) ──────────────────
-    scheduleFixedCslLabs( ctx, buckets['fixed-csl'], unscheduled );
+    scheduleFixedCslLabs( timetable, buckets['fixed-csl'], unscheduled );
 
     reserveClassP1Slots( timetable, allTasks.filter( t => t.hasFixedPeriods && taskRequiresFixedPeriodOne( t ) ) );
 
     buckets['lab'].forEach( task => {
-        if ( !task.alreadyScheduled ) scheduleLabBlock( ctx, task, unscheduled );
+        if ( !task.alreadyScheduled ) scheduleLabBlock( timetable, task, unscheduled );
     } );
 
-    scheduleFixedTasks( ctx, buckets['fixed'], deferredTasks, unscheduled );
+    scheduleFixedTasks( timetable, buckets['fixed'], deferredTasks, unscheduled );
 
-    scheduleFixedCombinedTasks( ctx, buckets['fixed-combined'], deferredTasks, unscheduled );
+    scheduleFixedCombinedTasks( timetable, buckets['fixed-combined'], deferredTasks, unscheduled );
 
     const classTeacherP1Tasks = deferredTasks.filter( task => isClassTeacherP1Task( task ) );
     const otherDeferredTasks  = deferredTasks.filter( task => !isClassTeacherP1Task( task ) );
-    scheduleClassTeacherP1AfterLabs( ctx, classTeacherP1Tasks, unscheduled );
+    scheduleClassTeacherP1AfterLabs( timetable, classTeacherP1Tasks, unscheduled );
     validatePhase("Fixed Tasks & Labs");
 
-    // Phase B setup is now just continuing with ctx
+    // ── PHASE B: MRV Scheduler (normal + combined + deferred normal) ──────────
+    const ctx = prepareSchedulerContext( timetable );
 
     // Stamp original periods needed for diagnostics
     allTasks.forEach( t => { t._originalPeriods = t.periodsNeeded; } );
@@ -5975,7 +5956,7 @@ function generateTimetable() {
     validatePhase("MRV Scheduler");
 
     // ── PHASE C: Fill remaining empty slots (last resort) ─────────────────────
-    let finalUnscheduled = fillAllEmptyPeriods( ctx, unscheduled );
+    let finalUnscheduled = fillAllEmptyPeriods( timetable, unscheduled );
     finalUnscheduled = finalUnscheduled.filter( t => t.periodsUnscheduled > 0 );
     validatePhase("Fill Empty Periods");
 
@@ -7087,7 +7068,7 @@ function generateTimetableHTML( classData ) {
     // Header row
     html += '<thead><tr><th>Day/Period</th>';
     for ( let i = 1; i <= numPeriods; i++ ) {
-        const periodTime = getPeriodTime( i );
+        const periodTime = toCleanString( headerDay.periods[i - 1]?.time );
         const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
         html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
         if ( showBreakAfterPeriod[i] ) {
@@ -7584,112 +7565,8 @@ function exportTimetable() {
 function exportToExcel() {
     // Create a new workbook
     const wb = XLSX.utils.book_new();
-    const dayOrder = getAllActiveDays();
-    let maxPeriods = 0;
 
-    // Find max periods
-    Object.keys( state.timetableData ).forEach( className => {
-        state.timetableData[className].days.forEach( day => {
-            maxPeriods = Math.max( maxPeriods, day.periods.length );
-        });
-    });
-
-    // 1. All Classes Master Sheet
-    const classMasterData = [['Class', 'Day']];
-    for ( let i = 1; i <= maxPeriods; i++ ) classMasterData[0].push(`P${i}`);
-    
-    Object.keys( state.timetableData ).forEach( className => {
-        const classData = state.timetableData[className];
-        dayOrder.forEach( dayName => {
-            const dayData = classData.days.find( d => d.dayName === dayName );
-            if ( !dayData ) return;
-            const row = [className, dayName];
-            for (let i = 1; i <= maxPeriods; i++) {
-                const period = dayData.periods.find(p => p.period === i);
-                if (period && (period.subject || period.teacherName)) {
-                    row.push(`${period.subject || 'No Subject'} (${period.teacherName || 'No Teacher'})`);
-                } else {
-                    row.push('');
-                }
-            }
-            classMasterData.push(row);
-        });
-    });
-    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( classMasterData ), "All Classes" );
-
-    // 2. All Teachers Master Sheet
-    const teacherGrid = {}; // teacher -> day -> period -> []
-    Object.keys( state.timetableData ).forEach( className => {
-        state.timetableData[className].days.forEach( dayData => {
-            dayData.periods.forEach( period => {
-                if (period.teacherName) {
-                    const t = period.teacherName;
-                    if (!teacherGrid[t]) teacherGrid[t] = {};
-                    if (!teacherGrid[t][dayData.dayName]) teacherGrid[t][dayData.dayName] = {};
-                    if (!teacherGrid[t][dayData.dayName][period.period]) teacherGrid[t][dayData.dayName][period.period] = [];
-                    teacherGrid[t][dayData.dayName][period.period].push(`${className} (${period.subject || 'No Sub'})`);
-                }
-            });
-        });
-    });
-    
-    const teacherMasterData = [['Teacher', 'Day']];
-    for ( let i = 1; i <= maxPeriods; i++ ) teacherMasterData[0].push(`P${i}`);
-    
-    Object.keys(teacherGrid).sort().forEach(teacher => {
-        dayOrder.forEach( dayName => {
-            const row = [teacher, dayName];
-            let hasData = false;
-            for (let i = 1; i <= maxPeriods; i++) {
-                if (teacherGrid[teacher][dayName] && teacherGrid[teacher][dayName][i]) {
-                    row.push(teacherGrid[teacher][dayName][i].join(' & '));
-                    hasData = true;
-                } else {
-                    row.push('');
-                }
-            }
-            if (hasData) teacherMasterData.push(row);
-        });
-    });
-    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( teacherMasterData ), "All Teachers" );
-
-    // 3. All Subjects Master Sheet
-    const subjectGrid = {}; // subject -> day -> period -> []
-    Object.keys( state.timetableData ).forEach( className => {
-        state.timetableData[className].days.forEach( dayData => {
-            dayData.periods.forEach( period => {
-                if (period.subject) {
-                    const s = period.subject;
-                    if (!subjectGrid[s]) subjectGrid[s] = {};
-                    if (!subjectGrid[s][dayData.dayName]) subjectGrid[s][dayData.dayName] = {};
-                    if (!subjectGrid[s][dayData.dayName][period.period]) subjectGrid[s][dayData.dayName][period.period] = [];
-                    subjectGrid[s][dayData.dayName][period.period].push(`${className} (${period.teacherName || 'No Teacher'})`);
-                }
-            });
-        });
-    });
-    
-    const subjectMasterData = [['Subject', 'Day']];
-    for ( let i = 1; i <= maxPeriods; i++ ) subjectMasterData[0].push(`P${i}`);
-    
-    Object.keys(subjectGrid).sort().forEach(subject => {
-        dayOrder.forEach( dayName => {
-            const row = [subject, dayName];
-            let hasData = false;
-            for (let i = 1; i <= maxPeriods; i++) {
-                if (subjectGrid[subject][dayName] && subjectGrid[subject][dayName][i]) {
-                    row.push(subjectGrid[subject][dayName][i].join(' & '));
-                    hasData = true;
-                } else {
-                    row.push('');
-                }
-            }
-            if (hasData) subjectMasterData.push(row);
-        });
-    });
-    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( subjectMasterData ), "All Subjects" );
-
-    // 4. Class-wise sheets
+    // Add each class as a sheet
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
 
@@ -7704,6 +7581,8 @@ function exportToExcel() {
         const data = [header];
 
         // Add each day's data
+        const dayOrder = getAllActiveDays();
+
         dayOrder.forEach( dayName => {
             const dayData = classData.days.find( d => d.dayName === dayName );
             if ( !dayData ) return;
@@ -7723,9 +7602,102 @@ function exportToExcel() {
 
         // Create worksheet
         const ws = XLSX.utils.aoa_to_sheet( data );
-        const sheetName = className.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
-        XLSX.utils.book_append_sheet( wb, ws, sheetName );
+        XLSX.utils.book_append_sheet( wb, ws, className );
     } );
+
+    let maxPeriods = 0;
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( dayData => {
+            maxPeriods = Math.max( maxPeriods, dayData.periods.length );
+        });
+    });
+    const dayOrder = getAllActiveDays();
+
+    // Teacher-wise Master Sheet
+    const teacherGrid = {};
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( dayData => {
+            dayData.periods.forEach( period => {
+                if (period.teacherName) {
+                    const t = period.teacherName;
+                    if (!teacherGrid[t]) teacherGrid[t] = {};
+                    if (!teacherGrid[t][dayData.dayName]) teacherGrid[t][dayData.dayName] = {};
+                    if (!teacherGrid[t][dayData.dayName][period.period]) teacherGrid[t][dayData.dayName][period.period] = [];
+                    teacherGrid[t][dayData.dayName][period.period].push(`${className} (${period.subject || 'No Subject'})`);
+                }
+            });
+        });
+    });
+    
+    const teacherMasterData = [['Teacher', 'Day']];
+    for ( let i = 1; i <= maxPeriods; i++ ) teacherMasterData[0].push(`P${i}`);
+    
+    Object.keys(teacherGrid).sort().forEach(teacher => {
+        let addedTeacher = false;
+        dayOrder.forEach( dayName => {
+            const row = [teacher, dayName];
+            let hasData = false;
+            for (let i = 1; i <= maxPeriods; i++) {
+                if (teacherGrid[teacher][dayName] && teacherGrid[teacher][dayName][i]) {
+                    row.push(teacherGrid[teacher][dayName][i].join(' & '));
+                    hasData = true;
+                } else {
+                    row.push('');
+                }
+            }
+            if (hasData) {
+                teacherMasterData.push(row);
+                addedTeacher = true;
+            }
+        });
+        if (addedTeacher) {
+            teacherMasterData.push([]); // Gap between sections
+        }
+    });
+    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( teacherMasterData ), "All Teachers" );
+
+    // Subject-wise Master Sheet
+    const subjectGrid = {};
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( dayData => {
+            dayData.periods.forEach( period => {
+                if (period.subject) {
+                    const s = period.subject;
+                    if (!subjectGrid[s]) subjectGrid[s] = {};
+                    if (!subjectGrid[s][dayData.dayName]) subjectGrid[s][dayData.dayName] = {};
+                    if (!subjectGrid[s][dayData.dayName][period.period]) subjectGrid[s][dayData.dayName][period.period] = [];
+                    subjectGrid[s][dayData.dayName][period.period].push(`${className} (${period.teacherName || 'No Teacher'})`);
+                }
+            });
+        });
+    });
+    
+    const subjectMasterData = [['Subject', 'Day']];
+    for ( let i = 1; i <= maxPeriods; i++ ) subjectMasterData[0].push(`P${i}`);
+    
+    Object.keys(subjectGrid).sort().forEach(subject => {
+        let addedSubject = false;
+        dayOrder.forEach( dayName => {
+            const row = [subject, dayName];
+            let hasData = false;
+            for (let i = 1; i <= maxPeriods; i++) {
+                if (subjectGrid[subject][dayName] && subjectGrid[subject][dayName][i]) {
+                    row.push(subjectGrid[subject][dayName][i].join(' & '));
+                    hasData = true;
+                } else {
+                    row.push('');
+                }
+            }
+            if (hasData) {
+                subjectMasterData.push(row);
+                addedSubject = true;
+            }
+        });
+        if (addedSubject) {
+            subjectMasterData.push([]); // Gap between sections
+        }
+    });
+    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( subjectMasterData ), "All Subjects" );
 
     // Generate and download file
     XLSX.writeFile( wb, 'school_timetable_export.xlsx' );
@@ -7812,8 +7784,7 @@ function downloadExcelTemplate() {
             'P4 Subject', 'P4 Teacher Name', 'P4 Teacher ID', 'P4 Time', 'P4 Type',
             'P5 Subject', 'P5 Teacher Name', 'P5 Teacher ID', 'P5 Time', 'P5 Type',
             'P6 Subject', 'P6 Teacher Name', 'P6 Teacher ID', 'P6 Time', 'P6 Type',
-            'P7 Subject', 'P7 Teacher Name', 'P7 Teacher ID', 'P7 Time', 'P7 Type',
-            'P8 Subject', 'P8 Teacher Name', 'P8 Teacher ID', 'P8 Time', 'P8 Type'
+            'P7 Subject', 'P7 Teacher Name', 'P7 Teacher ID', 'P7 Time', 'P7 Type'
         ];
 
         const data = [header];
@@ -7825,12 +7796,13 @@ function downloadExcelTemplate() {
             const row = [day];
 
             // Add sample periods
-            for ( let i = 1; i <= 8; i++ ) {
+            for ( let i = 1; i <= 7; i++ ) {
                 if ( i === 4 ) {
                     // Break period
-                    row.push( 'BREAK', '', '', '11:00-11:30', 'Regular' );
+                    row.push( 'BREAK', '', '', '11:50-12:30', 'Regular' );
                 } else {
-                    row.push( 'Mathematics', 'John Doe', '17PVSS0001', `${8 + i}:00-${8 + i}:45`, 'Regular' );
+                    const timeStr = getPeriodTime(i);
+                    row.push( 'Mathematics', 'John Doe', '17PVSS0001', timeStr, 'Regular' );
                 }
             }
 
