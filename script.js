@@ -6656,16 +6656,13 @@ function savePeriodTimes() {
 // Get default period time
 function getDefaultPeriodTime( periodNumber ) {
     const defaultTimings = [
-        "09:20-09:40",
         "09:40-10:20",
         "10:30-11:10",
         "11:10-11:50",
         "11:50-12:30",
         "13:00-13:40",
         "13:40-14:20",
-        "14:20-15:00",
-        "15:00-15:20",
-        "15:20-15:30"
+        "14:20-15:00"
     ];
 
     if ( periodNumber >= 1 && periodNumber <= defaultTimings.length ) {
@@ -6675,7 +6672,7 @@ function getDefaultPeriodTime( periodNumber ) {
     const startHour = 15;
     const periodDuration = 40;
 
-    let totalMinutes = ( startHour * 60 ) + 30 + ( ( periodNumber - 11 ) * periodDuration );
+    let totalMinutes = ( startHour * 60 ) + ( ( periodNumber - 8 ) * periodDuration );
 
     const startHours = Math.floor( totalMinutes / 60 );
     const startMinutes = totalMinutes % 60;
@@ -7090,7 +7087,7 @@ function generateTimetableHTML( classData ) {
     // Header row
     html += '<thead><tr><th>Day/Period</th>';
     for ( let i = 1; i <= numPeriods; i++ ) {
-        const periodTime = toCleanString( headerDay.periods[i - 1]?.time );
+        const periodTime = getPeriodTime( i );
         const periodTimeHtml = periodTime ? `<div class="period-header-time">${periodTime}</div>` : '';
         html += `<th><div>P${i}</div>${periodTimeHtml}</th>`;
         if ( showBreakAfterPeriod[i] ) {
@@ -7587,8 +7584,112 @@ function exportTimetable() {
 function exportToExcel() {
     // Create a new workbook
     const wb = XLSX.utils.book_new();
+    const dayOrder = getAllActiveDays();
+    let maxPeriods = 0;
 
-    // Add each class as a sheet
+    // Find max periods
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( day => {
+            maxPeriods = Math.max( maxPeriods, day.periods.length );
+        });
+    });
+
+    // 1. All Classes Master Sheet
+    const classMasterData = [['Class', 'Day']];
+    for ( let i = 1; i <= maxPeriods; i++ ) classMasterData[0].push(`P${i}`);
+    
+    Object.keys( state.timetableData ).forEach( className => {
+        const classData = state.timetableData[className];
+        dayOrder.forEach( dayName => {
+            const dayData = classData.days.find( d => d.dayName === dayName );
+            if ( !dayData ) return;
+            const row = [className, dayName];
+            for (let i = 1; i <= maxPeriods; i++) {
+                const period = dayData.periods.find(p => p.period === i);
+                if (period && (period.subject || period.teacherName)) {
+                    row.push(`${period.subject || 'No Subject'} (${period.teacherName || 'No Teacher'})`);
+                } else {
+                    row.push('');
+                }
+            }
+            classMasterData.push(row);
+        });
+    });
+    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( classMasterData ), "All Classes" );
+
+    // 2. All Teachers Master Sheet
+    const teacherGrid = {}; // teacher -> day -> period -> []
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( dayData => {
+            dayData.periods.forEach( period => {
+                if (period.teacherName) {
+                    const t = period.teacherName;
+                    if (!teacherGrid[t]) teacherGrid[t] = {};
+                    if (!teacherGrid[t][dayData.dayName]) teacherGrid[t][dayData.dayName] = {};
+                    if (!teacherGrid[t][dayData.dayName][period.period]) teacherGrid[t][dayData.dayName][period.period] = [];
+                    teacherGrid[t][dayData.dayName][period.period].push(`${className} (${period.subject || 'No Sub'})`);
+                }
+            });
+        });
+    });
+    
+    const teacherMasterData = [['Teacher', 'Day']];
+    for ( let i = 1; i <= maxPeriods; i++ ) teacherMasterData[0].push(`P${i}`);
+    
+    Object.keys(teacherGrid).sort().forEach(teacher => {
+        dayOrder.forEach( dayName => {
+            const row = [teacher, dayName];
+            let hasData = false;
+            for (let i = 1; i <= maxPeriods; i++) {
+                if (teacherGrid[teacher][dayName] && teacherGrid[teacher][dayName][i]) {
+                    row.push(teacherGrid[teacher][dayName][i].join(' & '));
+                    hasData = true;
+                } else {
+                    row.push('');
+                }
+            }
+            if (hasData) teacherMasterData.push(row);
+        });
+    });
+    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( teacherMasterData ), "All Teachers" );
+
+    // 3. All Subjects Master Sheet
+    const subjectGrid = {}; // subject -> day -> period -> []
+    Object.keys( state.timetableData ).forEach( className => {
+        state.timetableData[className].days.forEach( dayData => {
+            dayData.periods.forEach( period => {
+                if (period.subject) {
+                    const s = period.subject;
+                    if (!subjectGrid[s]) subjectGrid[s] = {};
+                    if (!subjectGrid[s][dayData.dayName]) subjectGrid[s][dayData.dayName] = {};
+                    if (!subjectGrid[s][dayData.dayName][period.period]) subjectGrid[s][dayData.dayName][period.period] = [];
+                    subjectGrid[s][dayData.dayName][period.period].push(`${className} (${period.teacherName || 'No Teacher'})`);
+                }
+            });
+        });
+    });
+    
+    const subjectMasterData = [['Subject', 'Day']];
+    for ( let i = 1; i <= maxPeriods; i++ ) subjectMasterData[0].push(`P${i}`);
+    
+    Object.keys(subjectGrid).sort().forEach(subject => {
+        dayOrder.forEach( dayName => {
+            const row = [subject, dayName];
+            let hasData = false;
+            for (let i = 1; i <= maxPeriods; i++) {
+                if (subjectGrid[subject][dayName] && subjectGrid[subject][dayName][i]) {
+                    row.push(subjectGrid[subject][dayName][i].join(' & '));
+                    hasData = true;
+                } else {
+                    row.push('');
+                }
+            }
+            if (hasData) subjectMasterData.push(row);
+        });
+    });
+    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( subjectMasterData ), "All Subjects" );
+
+    // 4. Class-wise sheets
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
 
@@ -7603,8 +7704,6 @@ function exportToExcel() {
         const data = [header];
 
         // Add each day's data
-        const dayOrder = getAllActiveDays();
-
         dayOrder.forEach( dayName => {
             const dayData = classData.days.find( d => d.dayName === dayName );
             if ( !dayData ) return;
@@ -7624,7 +7723,8 @@ function exportToExcel() {
 
         // Create worksheet
         const ws = XLSX.utils.aoa_to_sheet( data );
-        XLSX.utils.book_append_sheet( wb, ws, className );
+        const sheetName = className.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
+        XLSX.utils.book_append_sheet( wb, ws, sheetName );
     } );
 
     // Generate and download file
