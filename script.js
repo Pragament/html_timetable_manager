@@ -8,7 +8,7 @@ const state = {
     currentYear: '2026',
     periodTimes: {},
     fileType: 'excel',
-    excelFormat: 'legacy',
+    excelFormat: 'single_sheet',
     overlapCheckInProgress: false,
     teacherSubjectMap: {},
     teachers: [],
@@ -410,6 +410,33 @@ function setupEventListeners() {
     document.getElementById( 'saveTimeBtn' ).addEventListener( 'click', savePeriodTimes );
 
     // Modify timetable
+    const modifyViewMode = document.getElementById( 'modifyViewMode' );
+    if (modifyViewMode) {
+        modifyViewMode.addEventListener( 'change', function() {
+            const mode = this.value;
+            document.querySelectorAll('.view-filter').forEach(el => el.style.display = 'none');
+            const targetFilter = document.querySelector(`.view-filter[data-mode="${mode}"]`);
+            if (targetFilter) targetFilter.style.display = 'inline-block';
+            
+            const actionButtons = document.getElementById('modifyActionButtons');
+            if (actionButtons) {
+                actionButtons.style.display = (mode === 'class') ? 'flex' : 'none';
+            }
+            const rescheduleBtn = document.getElementById('rescheduleModeBtn');
+            if (rescheduleBtn) {
+                rescheduleBtn.style.display = (mode === 'class') ? 'inline-block' : 'none';
+            }
+            
+            document.getElementById('modifyTimetableDisplay').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-edit"></i>
+                    <h3>No Timetable Loaded</h3>
+                    <p>Select a ${mode} and load its timetable to view.</p>
+                </div>
+            `;
+        });
+    }
+
     document.getElementById( 'rescheduleModeBtn' ).addEventListener( 'click', toggleRescheduleMode );
     document.getElementById( 'loadTimetableBtn' ).addEventListener( 'click', loadTimetableForModification );
     document.getElementById( 'saveAllChangesBtn' ).addEventListener( 'click', saveAllModifiedChanges );
@@ -2099,6 +2126,8 @@ function processExcelWorkbook( workbook ) {
 
     if ( state.excelFormat === 'teacher_wise' ) {
         processedCount = processStateTimetableWorkbook( workbook );
+    } else if ( state.excelFormat === 'single_sheet' ) {
+        processedCount = processSingleSheetWorkbook( workbook );
     } else {
         // Process each sheet
         workbook.SheetNames.forEach( sheetName => {
@@ -2134,6 +2163,122 @@ function processExcelWorkbook( workbook ) {
             `;
 
     document.getElementById( 'timetableDataInfo' ).style.display = 'block';
+}
+
+function processSingleSheetWorkbook( workbook ) {
+    let sheetName = "Timetable";
+    if (!workbook.Sheets[sheetName]) {
+        sheetName = workbook.SheetNames[0];
+    }
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json( worksheet, { header: 1 } );
+
+    let currentClassName = null;
+    let headerRow = null;
+    let showBreakAfterPeriod = {};
+
+    for (let i = 0; i < jsonData.length; i++) {
+        let row = jsonData[i] || [];
+        // skip empty rows
+        if (row.length === 0 || row.every(cell => !cell || String(cell).trim() === '')) {
+            continue;
+        }
+
+        row = row.map(cell => cell != null ? String(cell).trim() : '');
+
+        // If row starts with 'Days / Periods', it's a header
+        if (row[0] === 'Days / Periods') {
+            headerRow = row;
+            showBreakAfterPeriod = {};
+            let periodCounter = 1;
+            for (let col = 1; col < headerRow.length; col++) {
+                const headerText = headerRow[col].toLowerCase();
+                if (headerText.includes('break') || headerText.includes('lunch') || headerText.includes('dairy')) {
+                    showBreakAfterPeriod[periodCounter - 1] = true;
+                } else if (headerText !== '') {
+                    periodCounter++;
+                }
+            }
+            continue;
+        }
+
+        const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        if (dayNames.includes(row[0])) {
+            if (currentClassName && headerRow) {
+                const dayName = row[0];
+                let dayObj = { dayName: dayName, periods: [] };
+                
+                let col = 1;
+                let periodCounter = 1;
+                while (col < headerRow.length) {
+                    const headerText = headerRow[col] ? headerRow[col].toLowerCase() : '';
+                    if (headerText.includes('break') || headerText.includes('lunch') || headerText.includes('dairy')) {
+                        col++;
+                        continue;
+                    }
+                    
+                    const cellVal = row[col] || '';
+                    let teacherName = '';
+                    let subject = '';
+                    
+                    let matchedTeacher = null;
+                    if (state.teachers && state.teachers.length > 0) {
+                        const sortedTeachers = [...state.teachers].sort((a,b) => (b.teacherName||'').length - (a.teacherName||'').length);
+                        for (let t of sortedTeachers) {
+                            if (t.teacherName && cellVal.toLowerCase().startsWith(t.teacherName.toLowerCase())) {
+                                matchedTeacher = t.teacherName;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (matchedTeacher) {
+                        teacherName = matchedTeacher;
+                        subject = cellVal.substring(matchedTeacher.length).trim();
+                    } else if (cellVal) {
+                        const parts = cellVal.split(/\s+/);
+                        teacherName = parts[0];
+                        subject = parts.slice(1).join(' ');
+                    }
+                    
+                    let breakAfter = 0;
+                    if (showBreakAfterPeriod[periodCounter]) {
+                        breakAfter = 10;
+                    }
+                    
+                    dayObj.periods.push({
+                        period: periodCounter,
+                        subject: subject,
+                        teacherName: teacherName,
+                        teacherId: '',
+                        time: '',
+                        type: 'Regular',
+                        breakAfter: breakAfter
+                    });
+                    
+                    periodCounter++;
+                    col++;
+                }
+                
+                if (!state.timetableData[currentClassName]) {
+                    state.timetableData[currentClassName] = {
+                        className: currentClassName,
+                        days: []
+                    };
+                }
+                state.timetableData[currentClassName].days.push(dayObj);
+            }
+            continue;
+        }
+        
+        // If it's not a day and not a header, it's the class name row.
+        if (row[0] && row[0] !== '') {
+            currentClassName = row[0];
+            headerRow = null;
+        }
+    }
+    
+    return Object.keys(state.timetableData).length;
 }
 
 function toCleanString( value ) {
@@ -6978,6 +7123,20 @@ function updateClassFilters() {
         subjectFilter.selectedIndex = -1;
     }
 
+    const modifyTeacherFilter = document.getElementById( 'modifyTeacherFilter' );
+    if ( modifyTeacherFilter ) {
+        modifyTeacherFilter.innerHTML = '<option value="">Select Teacher</option>' + sortedTeachers.map( teacher => 
+            `<option value="${escapeHtmlAttribute(teacher)}">${escapeHtml(teacher)}</option>`
+        ).join( '' );
+    }
+
+    const modifySubjectFilter = document.getElementById( 'modifySubjectFilter' );
+    if ( modifySubjectFilter ) {
+        modifySubjectFilter.innerHTML = '<option value="">Select Subject</option>' + uniqueSubjects.map( ( [subjectKey, subjectLabel] ) => 
+            `<option value="${escapeHtmlAttribute(subjectKey)}">${escapeHtml(subjectLabel)}</option>`
+        ).join( '' );
+    }
+
     // 4. Call createCheckboxDropdown() afterward
     createCheckboxDropdown( 'classFilter', 'Select Classes' );
     createCheckboxDropdown( 'teacherFilter', 'Select Teachers' );
@@ -7229,47 +7388,64 @@ function renderTeacherTimetableHTML( teacherFilters ) {
     } ).join('');
 }
 
-// Generate subject timetable HTML
-function renderSubjectTimetableHTML( subjectFilterKeys ) {
-    if ( !subjectFilterKeys || subjectFilterKeys.length === 0 ) {
-        return '<div class="empty-state"><p>Please select one or more subjects to view schedules.</p></div>';
+function renderSubjectTimetableHTML( subjectFilters ) {
+    if ( !subjectFilters || subjectFilters.length === 0 ) {
+        return '<div class="empty-state"><p>Please select one or more subjects to view their schedules.</p></div>';
     }
 
     if ( !state.timetableData ) return '<p>No timetable data.</p>';
+    
+    // get unique subject map to display label instead of just key
+    const uniqueSubjectMap = getUniqueSubjectMap();
 
-    return subjectFilterKeys.map( subjectFilterKey => {
-        const subjectLabel = getUniqueSubjectMap().get( subjectFilterKey ) || subjectFilterKey;
-        const subjectClasses = {};
-        const classNames = Object.keys( state.timetableData );
+    return subjectFilters.map( subjectFilter => {
+        const subjectLabel = uniqueSubjectMap.get(subjectFilter) || subjectFilter;
+        const dayOrder = getAllActiveDays();
+        const subjectGrid = {};
+        dayOrder.forEach( day => { subjectGrid[day] = {}; } );
 
-        classNames.forEach( className => {
+        let maxPeriods = 0;
+        let hasAnyEntry = false;
+
+        Object.keys( state.timetableData ).forEach( className => {
             const classData = state.timetableData[className];
             classData.days.forEach( day => {
+                maxPeriods = Math.max( maxPeriods, day.periods.length );
                 day.periods.forEach( period => {
-                    if ( normalizeSubjectName( period.subject ) === subjectFilterKey ) {
-                        if ( !subjectClasses[className] ) subjectClasses[className] = {};
-                        if ( !subjectClasses[className][day.dayName] ) subjectClasses[className][day.dayName] = [];
-                        subjectClasses[className][day.dayName].push( period );
+                    if ( period.subject === subjectFilter ) {
+                        hasAnyEntry = true;
+                        if ( !subjectGrid[day.dayName] ) subjectGrid[day.dayName] = {};
+                        if ( !subjectGrid[day.dayName][period.period] ) subjectGrid[day.dayName][period.period] = [];
+                        subjectGrid[day.dayName][period.period].push( {
+                            className,
+                            teacher: toCleanString( period.teacherName )
+                        } );
                     }
                 } );
             } );
         } );
 
-        const classes = Object.keys( subjectClasses );
-        if ( classes.length === 0 ) {
+        if ( !hasAnyEntry ) {
             return `<div class="empty-state"><p>No schedule found for subject: ${escapeHtml(subjectLabel)}</p></div>`;
         }
 
-        const headerHtml = classes.map( className => `<th>${escapeHtml(className)}</th>` ).join('');
-        const dayOrder = getAllActiveDays();
+        let maxPeriodsArray = Array.from({length: maxPeriods}, (_, i) => i + 1);
+
+        const headerHtml = maxPeriodsArray.map( i => {
+            const headerTime = getPeriodTime( i );
+            return `<th><div>P${i}</div><div class="period-header-time">${headerTime}</div></th>`;
+        }).join('');
 
         const bodyHtml = dayOrder.map( dayName => {
-            const rowCells = classes.map( className => {
-                const dayPeriods = subjectClasses[className][dayName] || [];
+            const rowCells = maxPeriodsArray.map( p => {
+                const entries = ( subjectGrid[dayName] && subjectGrid[dayName][p] ) ? subjectGrid[dayName][p] : [];
                 let periodInfo = '';
 
-                if ( dayPeriods.length > 0 ) {
-                    const periodText = dayPeriods.map( p => `P${p.period}: ${escapeHtml(p.teacherName)}` ).join( '<br>' );
+                if ( entries.length > 0 ) {
+                    const periodText = entries.map( entry =>
+                        `${escapeHtml(entry.className)}: ${entry.teacher ? escapeHtml(entry.teacher) : `<span class="no-subject-marker" title="No teacher assigned" aria-label="No teacher assigned">??</span>`}`
+                    ).join( '<br>' );
+
                     periodInfo = `<div class="period-subject">${periodText}</div>`;
                 }
 
@@ -7288,6 +7464,7 @@ function renderSubjectTimetableHTML( subjectFilterKeys ) {
         `;
     } ).join('');
 }
+
 
 // Check if a date is a holiday
 function isDateHoliday( dayName ) {
@@ -7566,44 +7743,67 @@ function exportToExcel() {
     // Create a new workbook
     const wb = XLSX.utils.book_new();
 
-    // Add each class as a sheet
+    const data = [];
+    const dayOrder = getAllActiveDays();
+
+    // Add each class in a single sheet
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
+        if (!classData || !classData.days || classData.days.length === 0) return;
 
-        // Create header row
-        const header = ['Day'];
+        data.push([className]);
+
         const numPeriods = classData.days[0].periods.length;
+        const headerDay = classData.days[0];
+        const showBreakAfterPeriod = {};
 
-        for ( let i = 1; i <= numPeriods; i++ ) {
-            header.push( `P${i} Subject`, `P${i} Teacher Name`, `P${i} Teacher ID`, `P${i} Time`, `P${i} Type` );
+        for ( let i = 0; i < numPeriods; i++ ) {
+            const period = headerDay.periods[i];
+            showBreakAfterPeriod[i + 1] = i < numPeriods - 1 && Number( period?.breakAfter || 0 ) > 0;
         }
 
-        const data = [header];
+        // Header row
+        const headerRow = ['Days / Periods'];
+        for ( let i = 1; i <= numPeriods; i++ ) {
+            const periodTime = toCleanString( headerDay.periods[i - 1]?.time );
+            const timeText = periodTime ? ` (${periodTime})` : '';
+            headerRow.push(`${i}${timeText}`);
+            if (showBreakAfterPeriod[i]) {
+                headerRow.push('Break');
+            }
+        }
+        data.push(headerRow);
 
-        // Add each day's data
-        const dayOrder = getAllActiveDays();
-
+        // Day rows
         dayOrder.forEach( dayName => {
             const dayData = classData.days.find( d => d.dayName === dayName );
             if ( !dayData ) return;
 
             const row = [dayName];
-
             dayData.periods.forEach( period => {
-                row.push( period.subject || '' );
-                row.push( period.teacherName || '' );
-                row.push( period.teacherId || '' );
-                row.push( period.time || '' );
-                row.push( period.type || 'Regular' );
+                let cellText = '';
+                if (period.teacherName || period.subject) {
+                    const t = period.teacherName || '';
+                    const s = period.subject || '';
+                    cellText = `${t} ${s}`.trim();
+                }
+                row.push(cellText);
+                
+                if (showBreakAfterPeriod[period.period]) {
+                    row.push('');
+                }
             } );
-
-            data.push( row );
+            data.push(row);
         } );
 
-        // Create worksheet
-        const ws = XLSX.utils.aoa_to_sheet( data );
-        XLSX.utils.book_append_sheet( wb, ws, className );
+        // Add 6 empty rows as spacing
+        for (let i = 0; i < 6; i++) {
+            data.push([]);
+        }
     } );
+
+    const ws = XLSX.utils.aoa_to_sheet( data );
+    XLSX.utils.book_append_sheet( wb, ws, "Timetable" );
 
     let maxPeriods = 0;
     Object.keys( state.timetableData ).forEach( className => {
@@ -7611,7 +7811,6 @@ function exportToExcel() {
             maxPeriods = Math.max( maxPeriods, dayData.periods.length );
         });
     });
-    const dayOrder = getAllActiveDays();
 
     // Teacher-wise Master Sheet
     const teacherGrid = {};
@@ -7933,33 +8132,51 @@ function handlePeriodSelection( event ) {
 
 // Load timetable for modification
 function loadTimetableForModification(silent = false) {
-    const classFilter = document.getElementById( 'modifyClassFilter' ).value;
-
-    if ( !classFilter ) {
-        if (!silent) alert( "Please select a class to load." );
-        return;
-    }
-
-    if ( !state.timetableData || !state.timetableData[classFilter] ) {
-        if (!silent) alert( "No timetable data found for this class." );
-        return;
-    }
-
+    const viewMode = document.getElementById( 'modifyViewMode' ) ? document.getElementById( 'modifyViewMode' ).value : 'class';
     const modifyTimetableDisplay = document.getElementById( 'modifyTimetableDisplay' );
-    const classData = state.timetableData[classFilter];
 
-    modifyTimetableDisplay.innerHTML = `
-                <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
-                ${generateTimetableHTML( classData )}
-            `;
+    if (viewMode === 'class') {
+        const classFilter = document.getElementById( 'modifyClassFilter' ).value;
 
-    // Add click listeners if in reschedule mode
-    if ( state.rescheduleMode ) {
-        addRescheduleListeners();
-    } else {
-        addEditListeners();
+        if ( !classFilter ) {
+            if (!silent) alert( "Please select a class to load." );
+            return;
+        }
+
+        if ( !state.timetableData || !state.timetableData[classFilter] ) {
+            if (!silent) alert( "No timetable data found for this class." );
+            return;
+        }
+
+        const classData = state.timetableData[classFilter];
+
+        modifyTimetableDisplay.innerHTML = `
+                    <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
+                    ${generateTimetableHTML( classData )}
+                `;
+
+        // Add click listeners if in reschedule mode
+        if ( state.rescheduleMode ) {
+            addRescheduleListeners();
+        } else {
+            addEditListeners();
+        }
+        updateModifyActionsState();
+    } else if (viewMode === 'teacher') {
+        const teacherFilter = document.getElementById( 'modifyTeacherFilter' ).value;
+        if ( !teacherFilter ) {
+            if (!silent) alert( "Please select a teacher to load." );
+            return;
+        }
+        modifyTimetableDisplay.innerHTML = renderTeacherTimetableHTML( [teacherFilter] );
+    } else if (viewMode === 'subject') {
+        const subjectFilter = document.getElementById( 'modifySubjectFilter' ).value;
+        if ( !subjectFilter ) {
+            if (!silent) alert( "Please select a subject to load." );
+            return;
+        }
+        modifyTimetableDisplay.innerHTML = renderSubjectTimetableHTML( [subjectFilter] );
     }
-    updateModifyActionsState();
 }
 
 // Load teacher schedule

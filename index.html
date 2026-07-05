@@ -420,6 +420,7 @@
                     <label for="excelFormatSelect">Excel Format</label>
                     <select id="excelFormatSelect" class="form-control">
                         <option value="legacy">Standard (Sheet-per-Class)</option>
+                        <option value="single_sheet" selected>Single Sheet (All Classes)</option>
                         <option value="teacher_wise">teacher-wise</option>
                     </select>
                 </div>
@@ -502,26 +503,40 @@
                 </button>
             </div>
             
-            <div class="filter-controls">
-                <select id="modifyClassFilter" class="form-control">
-                    <option value="">Select Class</option>
-                    <option value="Grade-I-A">Grade I-A</option>
-                    <option value="Grade-I-B">Grade I-B</option>
-                    <option value="Grade-II-A">Grade II-A</option>
-                    <option value="Grade-II-B">Grade II-B</option>
+            <div class="filter-controls" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+                <label for="modifyViewMode" style="font-weight: 600;">View Mode:</label>
+                <select id="modifyViewMode" class="form-control" style="width: auto;">
+                    <option value="class">Class-wise</option>
+                    <option value="teacher">Teacher-wise (View Only)</option>
+                    <option value="subject">Subject-wise (View Only)</option>
                 </select>
+                
+                <select id="modifyClassFilter" class="form-control view-filter" data-mode="class">
+                    <option value="">Select Class</option>
+                </select>
+                
+                <select id="modifyTeacherFilter" class="form-control view-filter" data-mode="teacher" style="display: none;">
+                    <option value="">Select Teacher</option>
+                </select>
+                
+                <select id="modifySubjectFilter" class="form-control view-filter" data-mode="subject" style="display: none;">
+                    <option value="">Select Subject</option>
+                </select>
+
                 <button class="btn btn-primary" id="loadTimetableBtn">
                     <i class="fas fa-sync-alt"></i> Load Timetable
                 </button>
-                <button class="btn btn-success" id="saveAllChangesBtn" disabled>
-                    <i class="fas fa-save"></i> Save Changes
-                </button>
-                <button class="btn btn-danger" id="cancelAllChangesBtn" disabled>
-                    <i class="fas fa-times"></i> Cancel Changes
-                </button>
-                <button class="btn btn-secondary" id="undoEditBtn" disabled>
-                    <i class="fas fa-undo"></i> Undo
-                </button>
+                <div id="modifyActionButtons">
+                    <button class="btn btn-success" id="saveAllChangesBtn" disabled>
+                        <i class="fas fa-save"></i> Save Changes
+                    </button>
+                    <button class="btn btn-danger" id="cancelAllChangesBtn" disabled>
+                        <i class="fas fa-times"></i> Cancel Changes
+                    </button>
+                    <button class="btn btn-secondary" id="undoEditBtn" disabled>
+                        <i class="fas fa-undo"></i> Undo
+                    </button>
+                </div>
             </div>
             
             <div class="timetable-container">
