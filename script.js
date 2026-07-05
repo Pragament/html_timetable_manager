@@ -8368,12 +8368,13 @@ function openEditCellModal( className, dayName, periodNum ) {
     const subjectSelect = document.getElementById( 'editModalSubjectSelect' );
     subjectSelect.innerHTML = '<option value="">Select Subject (Clear / Break)</option>';
 
-    const subjects = state.subjects || [];
-    subjects.forEach( sub => {
+    const uniqueSubjects = Array.from( getUniqueSubjectMap().entries() ).sort( ( a, b ) => safeLocaleCompare( a[1], b[1] ) );
+    
+    uniqueSubjects.forEach( ([subCode, subName]) => {
         const option = document.createElement( 'option' );
-        option.value = sub.code;
-        option.textContent = `${sub.code} - ${sub.name}`;
-        if ( sub.code === periodData.subject ) {
+        option.value = subCode;
+        option.textContent = subCode === subName ? subCode : `${subCode} - ${subName}`;
+        if ( subCode === periodData.subject ) {
             option.selected = true;
         }
         subjectSelect.appendChild( option );
@@ -8455,11 +8456,26 @@ function getCapableTeachersForSubject( subjectName ) {
             capableTeacherIds.add( toCleanString( t.id ).toLowerCase() );
         }
     } );
+    
+    if ( state.teacherSubjectMap ) {
+        Object.keys( state.teacherSubjectMap ).forEach( key => {
+            const mappedSubj = toCleanString( state.teacherSubjectMap[key] ).toLowerCase();
+            if ( mappedSubj === cleanSubject ) {
+                if ( key.startsWith( 'id:' ) ) {
+                    capableTeacherIds.add( key.substring( 3 ).toLowerCase() );
+                } else if ( key.startsWith( 'name:' ) ) {
+                    const nameKey = key.substring( 5 ).toLowerCase();
+                    const t = ( state.teachers || [] ).find( teacher => toCleanString( teacher.teacherName || teacher.name ).toLowerCase() === nameKey );
+                    if ( t && t.id ) capableTeacherIds.add( toCleanString( t.id ).toLowerCase() );
+                }
+            }
+        } );
+    }
 
     capableTeacherIds.forEach( id => {
         const teacherObj = ( state.teachers || [] ).find( t => toCleanString( t.id ).toLowerCase() === id );
         if ( teacherObj ) {
-            result.push( { id: teacherObj.id, name: teacherObj.name } );
+            result.push( { id: teacherObj.id, name: teacherObj.name || teacherObj.teacherName } );
         } else {
             const mappingObj = ( state.teacherMappings || [] ).find( m => toCleanString( m.teacherId ).toLowerCase() === id );
             if ( mappingObj ) {
@@ -8469,6 +8485,13 @@ function getCapableTeachersForSubject( subjectName ) {
             }
         }
     } );
+
+    // If no capable teachers found, just return all teachers so the user isn't stuck
+    if ( result.length === 0 ) {
+        ( state.teachers || [] ).forEach( t => {
+            if ( t.id ) result.push( { id: t.id, name: t.teacherName || t.name } );
+        } );
+    }
 
     return result.sort( ( a, b ) => safeLocaleCompare( a.name, b.name ) );
 }
