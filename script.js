@@ -8,7 +8,7 @@ const state = {
     currentYear: '2026',
     periodTimes: {},
     fileType: 'excel',
-    excelFormat: 'legacy',
+    excelFormat: 'single_sheet',
     overlapCheckInProgress: false,
     teacherSubjectMap: {},
     teachers: [],
@@ -2099,6 +2099,8 @@ function processExcelWorkbook( workbook ) {
 
     if ( state.excelFormat === 'teacher_wise' ) {
         processedCount = processStateTimetableWorkbook( workbook );
+    } else if ( state.excelFormat === 'single_sheet' ) {
+        processedCount = processSingleSheetWorkbook( workbook );
     } else {
         // Process each sheet
         workbook.SheetNames.forEach( sheetName => {
@@ -2134,6 +2136,122 @@ function processExcelWorkbook( workbook ) {
             `;
 
     document.getElementById( 'timetableDataInfo' ).style.display = 'block';
+}
+
+function processSingleSheetWorkbook( workbook ) {
+    let sheetName = "Timetable";
+    if (!workbook.Sheets[sheetName]) {
+        sheetName = workbook.SheetNames[0];
+    }
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json( worksheet, { header: 1 } );
+
+    let currentClassName = null;
+    let headerRow = null;
+    let showBreakAfterPeriod = {};
+
+    for (let i = 0; i < jsonData.length; i++) {
+        let row = jsonData[i] || [];
+        // skip empty rows
+        if (row.length === 0 || row.every(cell => !cell || String(cell).trim() === '')) {
+            continue;
+        }
+
+        row = row.map(cell => cell != null ? String(cell).trim() : '');
+
+        // If row starts with 'Days / Periods', it's a header
+        if (row[0] === 'Days / Periods') {
+            headerRow = row;
+            showBreakAfterPeriod = {};
+            let periodCounter = 1;
+            for (let col = 1; col < headerRow.length; col++) {
+                const headerText = headerRow[col].toLowerCase();
+                if (headerText.includes('break') || headerText.includes('lunch') || headerText.includes('dairy')) {
+                    showBreakAfterPeriod[periodCounter - 1] = true;
+                } else if (headerText !== '') {
+                    periodCounter++;
+                }
+            }
+            continue;
+        }
+
+        const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        if (dayNames.includes(row[0])) {
+            if (currentClassName && headerRow) {
+                const dayName = row[0];
+                let dayObj = { dayName: dayName, periods: [] };
+                
+                let col = 1;
+                let periodCounter = 1;
+                while (col < headerRow.length) {
+                    const headerText = headerRow[col] ? headerRow[col].toLowerCase() : '';
+                    if (headerText.includes('break') || headerText.includes('lunch') || headerText.includes('dairy')) {
+                        col++;
+                        continue;
+                    }
+                    
+                    const cellVal = row[col] || '';
+                    let teacherName = '';
+                    let subject = '';
+                    
+                    let matchedTeacher = null;
+                    if (state.teachers && state.teachers.length > 0) {
+                        const sortedTeachers = [...state.teachers].sort((a,b) => (b.teacherName||'').length - (a.teacherName||'').length);
+                        for (let t of sortedTeachers) {
+                            if (t.teacherName && cellVal.toLowerCase().startsWith(t.teacherName.toLowerCase())) {
+                                matchedTeacher = t.teacherName;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (matchedTeacher) {
+                        teacherName = matchedTeacher;
+                        subject = cellVal.substring(matchedTeacher.length).trim();
+                    } else if (cellVal) {
+                        const parts = cellVal.split(/\s+/);
+                        teacherName = parts[0];
+                        subject = parts.slice(1).join(' ');
+                    }
+                    
+                    let breakAfter = 0;
+                    if (showBreakAfterPeriod[periodCounter]) {
+                        breakAfter = 10;
+                    }
+                    
+                    dayObj.periods.push({
+                        period: periodCounter,
+                        subject: subject,
+                        teacherName: teacherName,
+                        teacherId: '',
+                        time: '',
+                        type: 'Regular',
+                        breakAfter: breakAfter
+                    });
+                    
+                    periodCounter++;
+                    col++;
+                }
+                
+                if (!state.timetableData[currentClassName]) {
+                    state.timetableData[currentClassName] = {
+                        className: currentClassName,
+                        days: []
+                    };
+                }
+                state.timetableData[currentClassName].days.push(dayObj);
+            }
+            continue;
+        }
+        
+        // If it's not a day and not a header, it's the class name row.
+        if (row[0] && row[0] !== '') {
+            currentClassName = row[0];
+            headerRow = null;
+        }
+    }
+    
+    return Object.keys(state.timetableData).length;
 }
 
 function toCleanString( value ) {
@@ -7566,44 +7684,67 @@ function exportToExcel() {
     // Create a new workbook
     const wb = XLSX.utils.book_new();
 
-    // Add each class as a sheet
+    const data = [];
+    const dayOrder = getAllActiveDays();
+
+    // Add each class in a single sheet
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
+        if (!classData || !classData.days || classData.days.length === 0) return;
 
-        // Create header row
-        const header = ['Day'];
+        data.push([className]);
+
         const numPeriods = classData.days[0].periods.length;
+        const headerDay = classData.days[0];
+        const showBreakAfterPeriod = {};
 
-        for ( let i = 1; i <= numPeriods; i++ ) {
-            header.push( `P${i} Subject`, `P${i} Teacher Name`, `P${i} Teacher ID`, `P${i} Time`, `P${i} Type` );
+        for ( let i = 0; i < numPeriods; i++ ) {
+            const period = headerDay.periods[i];
+            showBreakAfterPeriod[i + 1] = i < numPeriods - 1 && Number( period?.breakAfter || 0 ) > 0;
         }
 
-        const data = [header];
+        // Header row
+        const headerRow = ['Days / Periods'];
+        for ( let i = 1; i <= numPeriods; i++ ) {
+            const periodTime = toCleanString( headerDay.periods[i - 1]?.time );
+            const timeText = periodTime ? ` (${periodTime})` : '';
+            headerRow.push(`${i}${timeText}`);
+            if (showBreakAfterPeriod[i]) {
+                headerRow.push('Break');
+            }
+        }
+        data.push(headerRow);
 
-        // Add each day's data
-        const dayOrder = getAllActiveDays();
-
+        // Day rows
         dayOrder.forEach( dayName => {
             const dayData = classData.days.find( d => d.dayName === dayName );
             if ( !dayData ) return;
 
             const row = [dayName];
-
             dayData.periods.forEach( period => {
-                row.push( period.subject || '' );
-                row.push( period.teacherName || '' );
-                row.push( period.teacherId || '' );
-                row.push( period.time || '' );
-                row.push( period.type || 'Regular' );
+                let cellText = '';
+                if (period.teacherName || period.subject) {
+                    const t = period.teacherName || '';
+                    const s = period.subject || '';
+                    cellText = `${t} ${s}`.trim();
+                }
+                row.push(cellText);
+                
+                if (showBreakAfterPeriod[period.period]) {
+                    row.push('');
+                }
             } );
-
-            data.push( row );
+            data.push(row);
         } );
 
-        // Create worksheet
-        const ws = XLSX.utils.aoa_to_sheet( data );
-        XLSX.utils.book_append_sheet( wb, ws, className );
+        // Add 6 empty rows as spacing
+        for (let i = 0; i < 6; i++) {
+            data.push([]);
+        }
     } );
+
+    const ws = XLSX.utils.aoa_to_sheet( data );
+    XLSX.utils.book_append_sheet( wb, ws, "Timetable" );
 
     let maxPeriods = 0;
     Object.keys( state.timetableData ).forEach( className => {
@@ -7611,7 +7752,6 @@ function exportToExcel() {
             maxPeriods = Math.max( maxPeriods, dayData.periods.length );
         });
     });
-    const dayOrder = getAllActiveDays();
 
     // Teacher-wise Master Sheet
     const teacherGrid = {};
