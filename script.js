@@ -438,6 +438,10 @@ function setupEventListeners() {
     }
 
     document.getElementById( 'rescheduleModeBtn' ).addEventListener( 'click', toggleRescheduleMode );
+    const exportFromModifyBtn = document.getElementById( 'exportFromModifyBtn' );
+    if (exportFromModifyBtn) {
+        exportFromModifyBtn.addEventListener( 'click', exportToExcel );
+    }
     document.getElementById( 'loadTimetableBtn' ).addEventListener( 'click', loadTimetableForModification );
     document.getElementById( 'saveAllChangesBtn' ).addEventListener( 'click', saveAllModifiedChanges );
     document.getElementById( 'cancelAllChangesBtn' ).addEventListener( 'click', cancelAllModifiedChanges );
