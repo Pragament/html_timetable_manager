@@ -410,6 +410,33 @@ function setupEventListeners() {
     document.getElementById( 'saveTimeBtn' ).addEventListener( 'click', savePeriodTimes );
 
     // Modify timetable
+    const modifyViewMode = document.getElementById( 'modifyViewMode' );
+    if (modifyViewMode) {
+        modifyViewMode.addEventListener( 'change', function() {
+            const mode = this.value;
+            document.querySelectorAll('.view-filter').forEach(el => el.style.display = 'none');
+            const targetFilter = document.querySelector(`.view-filter[data-mode="${mode}"]`);
+            if (targetFilter) targetFilter.style.display = 'inline-block';
+            
+            const actionButtons = document.getElementById('modifyActionButtons');
+            if (actionButtons) {
+                actionButtons.style.display = (mode === 'class') ? 'flex' : 'none';
+            }
+            const rescheduleBtn = document.getElementById('rescheduleModeBtn');
+            if (rescheduleBtn) {
+                rescheduleBtn.style.display = (mode === 'class') ? 'inline-block' : 'none';
+            }
+            
+            document.getElementById('modifyTimetableDisplay').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-edit"></i>
+                    <h3>No Timetable Loaded</h3>
+                    <p>Select a ${mode} and load its timetable to view.</p>
+                </div>
+            `;
+        });
+    }
+
     document.getElementById( 'rescheduleModeBtn' ).addEventListener( 'click', toggleRescheduleMode );
     document.getElementById( 'loadTimetableBtn' ).addEventListener( 'click', loadTimetableForModification );
     document.getElementById( 'saveAllChangesBtn' ).addEventListener( 'click', saveAllModifiedChanges );
@@ -7096,6 +7123,20 @@ function updateClassFilters() {
         subjectFilter.selectedIndex = -1;
     }
 
+    const modifyTeacherFilter = document.getElementById( 'modifyTeacherFilter' );
+    if ( modifyTeacherFilter ) {
+        modifyTeacherFilter.innerHTML = '<option value="">Select Teacher</option>' + sortedTeachers.map( teacher => 
+            `<option value="${escapeHtmlAttribute(teacher)}">${escapeHtml(teacher)}</option>`
+        ).join( '' );
+    }
+
+    const modifySubjectFilter = document.getElementById( 'modifySubjectFilter' );
+    if ( modifySubjectFilter ) {
+        modifySubjectFilter.innerHTML = '<option value="">Select Subject</option>' + uniqueSubjects.map( ( [subjectKey, subjectLabel] ) => 
+            `<option value="${escapeHtmlAttribute(subjectKey)}">${escapeHtml(subjectLabel)}</option>`
+        ).join( '' );
+    }
+
     // 4. Call createCheckboxDropdown() afterward
     createCheckboxDropdown( 'classFilter', 'Select Classes' );
     createCheckboxDropdown( 'teacherFilter', 'Select Teachers' );
@@ -7347,47 +7388,64 @@ function renderTeacherTimetableHTML( teacherFilters ) {
     } ).join('');
 }
 
-// Generate subject timetable HTML
-function renderSubjectTimetableHTML( subjectFilterKeys ) {
-    if ( !subjectFilterKeys || subjectFilterKeys.length === 0 ) {
-        return '<div class="empty-state"><p>Please select one or more subjects to view schedules.</p></div>';
+function renderSubjectTimetableHTML( subjectFilters ) {
+    if ( !subjectFilters || subjectFilters.length === 0 ) {
+        return '<div class="empty-state"><p>Please select one or more subjects to view their schedules.</p></div>';
     }
 
     if ( !state.timetableData ) return '<p>No timetable data.</p>';
+    
+    // get unique subject map to display label instead of just key
+    const uniqueSubjectMap = getUniqueSubjectMap();
 
-    return subjectFilterKeys.map( subjectFilterKey => {
-        const subjectLabel = getUniqueSubjectMap().get( subjectFilterKey ) || subjectFilterKey;
-        const subjectClasses = {};
-        const classNames = Object.keys( state.timetableData );
+    return subjectFilters.map( subjectFilter => {
+        const subjectLabel = uniqueSubjectMap.get(subjectFilter) || subjectFilter;
+        const dayOrder = getAllActiveDays();
+        const subjectGrid = {};
+        dayOrder.forEach( day => { subjectGrid[day] = {}; } );
 
-        classNames.forEach( className => {
+        let maxPeriods = 0;
+        let hasAnyEntry = false;
+
+        Object.keys( state.timetableData ).forEach( className => {
             const classData = state.timetableData[className];
             classData.days.forEach( day => {
+                maxPeriods = Math.max( maxPeriods, day.periods.length );
                 day.periods.forEach( period => {
-                    if ( normalizeSubjectName( period.subject ) === subjectFilterKey ) {
-                        if ( !subjectClasses[className] ) subjectClasses[className] = {};
-                        if ( !subjectClasses[className][day.dayName] ) subjectClasses[className][day.dayName] = [];
-                        subjectClasses[className][day.dayName].push( period );
+                    if ( period.subject === subjectFilter ) {
+                        hasAnyEntry = true;
+                        if ( !subjectGrid[day.dayName] ) subjectGrid[day.dayName] = {};
+                        if ( !subjectGrid[day.dayName][period.period] ) subjectGrid[day.dayName][period.period] = [];
+                        subjectGrid[day.dayName][period.period].push( {
+                            className,
+                            teacher: toCleanString( period.teacherName )
+                        } );
                     }
                 } );
             } );
         } );
 
-        const classes = Object.keys( subjectClasses );
-        if ( classes.length === 0 ) {
+        if ( !hasAnyEntry ) {
             return `<div class="empty-state"><p>No schedule found for subject: ${escapeHtml(subjectLabel)}</p></div>`;
         }
 
-        const headerHtml = classes.map( className => `<th>${escapeHtml(className)}</th>` ).join('');
-        const dayOrder = getAllActiveDays();
+        let maxPeriodsArray = Array.from({length: maxPeriods}, (_, i) => i + 1);
+
+        const headerHtml = maxPeriodsArray.map( i => {
+            const headerTime = getPeriodTime( i );
+            return `<th><div>P${i}</div><div class="period-header-time">${headerTime}</div></th>`;
+        }).join('');
 
         const bodyHtml = dayOrder.map( dayName => {
-            const rowCells = classes.map( className => {
-                const dayPeriods = subjectClasses[className][dayName] || [];
+            const rowCells = maxPeriodsArray.map( p => {
+                const entries = ( subjectGrid[dayName] && subjectGrid[dayName][p] ) ? subjectGrid[dayName][p] : [];
                 let periodInfo = '';
 
-                if ( dayPeriods.length > 0 ) {
-                    const periodText = dayPeriods.map( p => `P${p.period}: ${escapeHtml(p.teacherName)}` ).join( '<br>' );
+                if ( entries.length > 0 ) {
+                    const periodText = entries.map( entry =>
+                        `${escapeHtml(entry.className)}: ${entry.teacher ? escapeHtml(entry.teacher) : `<span class="no-subject-marker" title="No teacher assigned" aria-label="No teacher assigned">??</span>`}`
+                    ).join( '<br>' );
+
                     periodInfo = `<div class="period-subject">${periodText}</div>`;
                 }
 
@@ -7406,6 +7464,7 @@ function renderSubjectTimetableHTML( subjectFilterKeys ) {
         `;
     } ).join('');
 }
+
 
 // Check if a date is a holiday
 function isDateHoliday( dayName ) {
@@ -8073,33 +8132,51 @@ function handlePeriodSelection( event ) {
 
 // Load timetable for modification
 function loadTimetableForModification(silent = false) {
-    const classFilter = document.getElementById( 'modifyClassFilter' ).value;
-
-    if ( !classFilter ) {
-        if (!silent) alert( "Please select a class to load." );
-        return;
-    }
-
-    if ( !state.timetableData || !state.timetableData[classFilter] ) {
-        if (!silent) alert( "No timetable data found for this class." );
-        return;
-    }
-
+    const viewMode = document.getElementById( 'modifyViewMode' ) ? document.getElementById( 'modifyViewMode' ).value : 'class';
     const modifyTimetableDisplay = document.getElementById( 'modifyTimetableDisplay' );
-    const classData = state.timetableData[classFilter];
 
-    modifyTimetableDisplay.innerHTML = `
-                <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
-                ${generateTimetableHTML( classData )}
-            `;
+    if (viewMode === 'class') {
+        const classFilter = document.getElementById( 'modifyClassFilter' ).value;
 
-    // Add click listeners if in reschedule mode
-    if ( state.rescheduleMode ) {
-        addRescheduleListeners();
-    } else {
-        addEditListeners();
+        if ( !classFilter ) {
+            if (!silent) alert( "Please select a class to load." );
+            return;
+        }
+
+        if ( !state.timetableData || !state.timetableData[classFilter] ) {
+            if (!silent) alert( "No timetable data found for this class." );
+            return;
+        }
+
+        const classData = state.timetableData[classFilter];
+
+        modifyTimetableDisplay.innerHTML = `
+                    <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
+                    ${generateTimetableHTML( classData )}
+                `;
+
+        // Add click listeners if in reschedule mode
+        if ( state.rescheduleMode ) {
+            addRescheduleListeners();
+        } else {
+            addEditListeners();
+        }
+        updateModifyActionsState();
+    } else if (viewMode === 'teacher') {
+        const teacherFilter = document.getElementById( 'modifyTeacherFilter' ).value;
+        if ( !teacherFilter ) {
+            if (!silent) alert( "Please select a teacher to load." );
+            return;
+        }
+        modifyTimetableDisplay.innerHTML = renderTeacherTimetableHTML( [teacherFilter] );
+    } else if (viewMode === 'subject') {
+        const subjectFilter = document.getElementById( 'modifySubjectFilter' ).value;
+        if ( !subjectFilter ) {
+            if (!silent) alert( "Please select a subject to load." );
+            return;
+        }
+        modifyTimetableDisplay.innerHTML = renderSubjectTimetableHTML( [subjectFilter] );
     }
-    updateModifyActionsState();
 }
 
 // Load teacher schedule
