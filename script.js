@@ -7077,7 +7077,7 @@ function updateClassFilters() {
         classFilter.selectedIndex = -1;
     }
 
-    modifyClassFilter.innerHTML = '<option value="">Select Class</option>' + classes.map( className => 
+    modifyClassFilter.innerHTML = '<option value="all">All Classes</option>' + classes.map( className => 
         `<option value="${escapeHtmlAttribute(className)}">${escapeHtml(className)}</option>`
     ).join( '' );
 
@@ -8147,17 +8147,37 @@ function loadTimetableForModification(silent = false) {
             return;
         }
 
-        if ( !state.timetableData || !state.timetableData[classFilter] ) {
-            if (!silent) alert( "No timetable data found for this class." );
-            return;
-        }
+        if (classFilter === 'all') {
+            if ( !state.timetableData || Object.keys(state.timetableData).length === 0 ) {
+                if (!silent) alert( "No timetable data found." );
+                return;
+            }
 
-        const classData = state.timetableData[classFilter];
-
-        modifyTimetableDisplay.innerHTML = `
-                    <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
-                    ${generateTimetableHTML( classData )}
+            let html = '';
+            const classNames = Object.keys(state.timetableData).sort();
+            for (const className of classNames) {
+                const classData = state.timetableData[className];
+                html += `
+                    <div style="margin-bottom: 40px; border-bottom: 2px dashed #ccc; padding-bottom: 20px;">
+                        <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
+                        ${generateTimetableHTML( classData )}
+                    </div>
                 `;
+            }
+            modifyTimetableDisplay.innerHTML = html;
+        } else {
+            if ( !state.timetableData || !state.timetableData[classFilter] ) {
+                if (!silent) alert( "No timetable data found for this class." );
+                return;
+            }
+
+            const classData = state.timetableData[classFilter];
+
+            modifyTimetableDisplay.innerHTML = `
+                        <h3 style="margin: 20px 0 10px 15px;">${classData.className}</h3>
+                        ${generateTimetableHTML( classData )}
+                    `;
+        }
 
         // Add click listeners if in reschedule mode
         if ( state.rescheduleMode ) {
@@ -8343,8 +8363,9 @@ function handlePeriodEditClick( event ) {
     const dayName = cell.getAttribute( 'data-day' );
     const periodNum = parseInt( cell.getAttribute( 'data-period' ) );
 
-    openEditCellModal( className, dayName, periodNum );
+    openRecommendationPanel( className, dayName, periodNum );
 }
+
 
 function openEditCellModal( className, dayName, periodNum ) {
     const classData = state.timetableData[className];
@@ -9596,3 +9617,323 @@ function exportGenerationReport() {
     document.body.removeChild(link);
 }
 
+
+
+/* =========================================================================
+   SMART ASSIGNMENT RECOMMENDATIONS
+   ========================================================================= */
+
+let currentRecContext = null;
+
+function openRecommendationPanel(className, dayName, periodNum) {
+    currentRecContext = { className, dayName, periodNum };
+    
+    document.getElementById('recDayContext').textContent = dayName;
+    document.getElementById('recPeriodContext').textContent = 'P' + periodNum;
+    document.getElementById('recClassContext').textContent = className;
+    
+    populateRecommendationFilters(className);
+    bindRecommendationEvents();
+    
+    document.getElementById('recommendationPanel').classList.add('open');
+    refreshRecommendations();
+}
+
+function closeRecommendationPanel() {
+    const panel = document.getElementById('recommendationPanel');
+    if (panel) panel.classList.remove('open');
+    currentRecContext = null;
+}
+
+function bindRecommendationEvents() {
+    const panel = document.getElementById('recommendationPanel');
+    if (!panel || panel.dataset.eventsBound === "true") return;
+    
+    const closeBtn = document.getElementById('closeRecommendationPanelBtn');
+    if (closeBtn) closeBtn.addEventListener('click', closeRecommendationPanel);
+    
+    const manualEditBtn = document.getElementById('openManualEditBtn');
+    if (manualEditBtn) {
+        manualEditBtn.addEventListener('click', () => {
+            if (currentRecContext) {
+                openEditCellModal(currentRecContext.className, currentRecContext.dayName, currentRecContext.periodNum);
+                closeRecommendationPanel();
+            }
+        });
+    }
+    
+    ['recTeacherFilter', 'recSubjectFilter', 'recAvailableOnly', 'recPendingOnly', 'recNoConflicts'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', refreshRecommendations);
+        }
+    });
+    
+    panel.dataset.eventsBound = "true";
+}
+
+function populateRecommendationFilters(className) {
+    const mappings = (state.teacherMappings || []).filter(m => {
+        if (!m.gradeSection) return false;
+        const classNames = parseGradeSectionParts(m.gradeSection)
+            .flatMap(part => resolveMappingToClassNames(part))
+            .filter(Boolean);
+        return classNames.includes(className);
+    });
+    
+    const uniqueTeachers = new Map();
+    const uniqueSubjects = new Set();
+    
+    mappings.forEach(m => {
+        if (m.teacherId || m.teacherName) {
+            uniqueTeachers.set(m.teacherId || m.teacherName, m.teacherName || m.teacherId);
+        }
+        if (m.subject) {
+            uniqueSubjects.add(m.subject);
+        }
+    });
+    
+    const teacherSelect = document.getElementById('recTeacherFilter');
+    if (teacherSelect) {
+        teacherSelect.innerHTML = '<option value="all">All</option>';
+        Array.from(uniqueTeachers.entries()).sort((a,b) => safeLocaleCompare(a[1], b[1])).forEach(([id, name]) => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = name;
+            teacherSelect.appendChild(opt);
+        });
+    }
+    
+    const subjectSelect = document.getElementById('recSubjectFilter');
+    if (subjectSelect) {
+        subjectSelect.innerHTML = '<option value="all">All</option>';
+        Array.from(uniqueSubjects).sort().forEach(sub => {
+            const opt = document.createElement('option');
+            opt.value = sub;
+            opt.textContent = sub;
+            subjectSelect.appendChild(opt);
+        });
+    }
+}
+
+function refreshRecommendations() {
+    if (!currentRecContext) return;
+    
+    const teacherFilter = document.getElementById('recTeacherFilter')?.value;
+    const subjectFilter = document.getElementById('recSubjectFilter')?.value;
+    const availableOnly = document.getElementById('recAvailableOnly')?.checked;
+    const pendingOnly = document.getElementById('recPendingOnly')?.checked;
+    const noConflicts = document.getElementById('recNoConflicts')?.checked;
+    
+    const recs = getAssignmentRecommendations({
+        ...currentRecContext,
+        teacherFilter,
+        subjectFilter,
+        availableOnly,
+        pendingOnly,
+        noConflicts
+    });
+    
+    renderRecommendations(recs);
+}
+
+function getAssignmentRecommendations(options) {
+    const { className, dayName, periodNum, teacherFilter, subjectFilter, availableOnly, pendingOnly, noConflicts } = options;
+    const allMappings = state.teacherMappings || [];
+    
+    let candidates = allMappings.filter(m => {
+        if (!m.gradeSection) return false;
+        const classNames = parseGradeSectionParts(m.gradeSection)
+            .flatMap(part => resolveMappingToClassNames(part))
+            .filter(Boolean);
+        return classNames.includes(className);
+    });
+    
+    if (teacherFilter && teacherFilter !== "all") {
+        candidates = candidates.filter(m => (m.teacherId || m.teacherName) === teacherFilter);
+    }
+    
+    if (subjectFilter && subjectFilter !== "all") {
+        candidates = candidates.filter(m => m.subject === subjectFilter);
+    }
+    
+    const maxTeacherPeriodsInput = document.getElementById('periodsPerTeacherInput');
+    const maxTeacherPeriods = maxTeacherPeriodsInput ? parseInt(maxTeacherPeriodsInput.value) || 35 : 35;
+    
+    const scoredCandidates = [];
+    
+    for (const mapping of candidates) {
+        let reasons = [];
+        let score = 0;
+        let isConflict = false;
+        
+        // 1. Availability Check
+        const conflictStr = checkTeacherConflict(mapping.teacherId, mapping.teacherName, className, dayName, periodNum);
+        if (conflictStr) {
+            isConflict = true;
+            reasons.push({ text: 'Teacher Busy', type: 'warning' });
+            if (availableOnly || noConflicts) continue; 
+        } else {
+            score += 40;
+            reasons.push({ text: 'Teacher Free', type: 'neutral' });
+        }
+        
+        // 2. Weekly Quota
+        const reqPeriods = parseInt(mapping.periodsPerWeek) || 0;
+        let scheduledPeriods = 0;
+        const classData = state.timetableData ? state.timetableData[className] : null;
+        
+        if (classData && classData.days) {
+            classData.days.forEach(d => {
+                (d.periods || []).forEach(p => {
+                    if (p.subject === mapping.subject && (p.teacherId === mapping.teacherId || p.teacherName === mapping.teacherName)) {
+                        scheduledPeriods++;
+                    }
+                });
+            });
+        }
+        
+        const remaining = reqPeriods - scheduledPeriods;
+        if (remaining <= 0) {
+            reasons.push({ text: 'Quota Filled', type: 'warning' });
+            if (pendingOnly) continue;
+        } else {
+            score += 30;
+            reasons.push({ text: 'Pending (' + remaining + ')', type: 'neutral' });
+        }
+        
+        // 3. Daily spread
+        let scheduledToday = 0;
+        if (classData && classData.days) {
+            const dayData = classData.days.find(d => d.dayName === dayName);
+            if (dayData && dayData.periods) {
+                scheduledToday = dayData.periods.filter(p => p.subject === mapping.subject).length;
+            }
+        }
+        
+        if (scheduledToday >= 2) {
+            isConflict = true;
+            reasons.push({ text: 'Already ' + scheduledToday + ' today', type: 'warning' });
+            if (noConflicts) continue;
+        } else if (scheduledToday === 0) {
+            score += 15; 
+            reasons.push({ text: 'Balanced Week', type: 'neutral' });
+        }
+        
+        // 4. Teacher Load
+        let teacherTotalAssigned = 0;
+        if (state.timetableData) {
+             Object.values(state.timetableData).forEach(cd => {
+                 (cd.days || []).forEach(d => {
+                     (d.periods || []).forEach(p => {
+                         if ((mapping.teacherId && p.teacherId === mapping.teacherId) || (mapping.teacherName && p.teacherName === mapping.teacherName)) {
+                             teacherTotalAssigned++;
+                         }
+                     })
+                 })
+             })
+        }
+        
+        if (teacherTotalAssigned >= maxTeacherPeriods) {
+            isConflict = true;
+            reasons.push({ text: 'Workload Full (' + teacherTotalAssigned + ')', type: 'warning' });
+            if (noConflicts) continue;
+        } else {
+            score += 5;
+            reasons.push({ text: 'Load: ' + teacherTotalAssigned + '/' + maxTeacherPeriods, type: 'neutral' });
+        }
+        
+        scoredCandidates.push({ mapping, score, isConflict, reasons, remaining });
+    }
+    
+    scoredCandidates.sort((a, b) => b.score - a.score);
+    return scoredCandidates;
+}
+
+function renderRecommendations(recs) {
+    const list = document.getElementById('recommendationList');
+    if (!list) return;
+    list.innerHTML = '';
+    
+    if (recs.length === 0) {
+        list.innerHTML = `
+            <div class="rec-empty">
+                <i class="fas fa-box-open"></i>
+                <p>No suitable recommendations found based on current filters.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    recs.forEach(rec => {
+        let stars = "★★★★★";
+        if (rec.score < 80) stars = "★★★★";
+        if (rec.score < 60) stars = "★★★";
+        if (rec.score < 40) stars = "★★";
+        if (rec.score < 20) stars = "★";
+        
+        const card = document.createElement('div');
+        card.className = 'rec-card';
+        
+        let reasonsHtml = rec.reasons.map(r => '<span class="rec-reason ' + r.type + '">' + r.text + '</span>').join('');
+        
+        const teacherStr = rec.mapping.teacherName || rec.mapping.teacherId || '';
+        const periodsPerWeek = rec.mapping.periodsPerWeek || 0;
+        
+        card.innerHTML = `
+            <div class="rec-card-header">
+                <div>
+                    <h4 class="rec-subject">${rec.mapping.subject}</h4>
+                    <div class="rec-teacher"><i class="fas fa-chalkboard-teacher"></i> ${teacherStr}</div>
+                </div>
+                <div class="rec-stars">${stars}</div>
+            </div>
+            <div class="rec-stats">
+                <div class="rec-stat-item">
+                    <span>Remaining</span>
+                    <span>${Math.max(0, rec.remaining)} / ${periodsPerWeek}</span>
+                </div>
+            </div>
+            <div class="rec-reasons">
+                ${reasonsHtml}
+            </div>
+            <button class="rec-apply-btn">
+                Apply <i class="fas fa-check-circle"></i>
+            </button>
+        `;
+        
+        const applyBtn = card.querySelector('.rec-apply-btn');
+        applyBtn.addEventListener('click', () => {
+            applyRecommendation(rec.mapping.subject, rec.mapping.teacherId, rec.mapping.teacherName);
+        });
+        
+        list.appendChild(card);
+    });
+}
+
+function applyRecommendation(subject, teacherId, teacherName) {
+    if (!currentRecContext) return;
+    const { className, dayName, periodNum } = currentRecContext;
+    
+    const classData = state.timetableData[className];
+    if (!classData) return;
+    const dayData = classData.days.find(d => d.dayName === dayName);
+    if (!dayData) return;
+    const periodData = dayData.periods.find(p => p.period === periodNum);
+    if (!periodData) return;
+    
+    periodData.subject = subject;
+    periodData.teacherId = teacherId || findTeacherIdByName(teacherName);
+    periodData.teacherName = teacherName || findTeacherNameById(teacherId);
+    
+    loadTimetableForModification(true);
+    refreshRecommendations();
+    
+    // Enable save buttons
+    const saveAllChangesBtn = document.getElementById( 'saveAllChangesBtn' );
+    const cancelAllChangesBtn = document.getElementById( 'cancelAllChangesBtn' );
+    if (saveAllChangesBtn) saveAllChangesBtn.disabled = false;
+    if (cancelAllChangesBtn) cancelAllChangesBtn.disabled = false;
+    
+    state.hasUnsavedChanges = true;
+}

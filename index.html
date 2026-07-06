@@ -515,7 +515,7 @@
                 </select>
                 
                 <select id="modifyClassFilter" class="form-control view-filter" data-mode="class">
-                    <option value="">Select Class</option>
+                    <option value="all">All Classes</option>
                 </select>
                 
                 <select id="modifyTeacherFilter" class="form-control view-filter" data-mode="teacher" style="display: none;">
@@ -708,6 +708,56 @@
             <div class="modal-footer">
                 <button class="btn btn-danger" id="cancelEditCellBtn">Cancel</button>
                 <button class="btn btn-success" id="saveEditCellBtn">Save</button>
+            </div>
+        </div>
+    </div>
+    <!-- Smart Assignment Recommendations Panel -->
+    <div id="recommendationPanel" class="recommendation-panel">
+        <div class="panel-header">
+            <div class="panel-title">
+                <i class="fas fa-lightbulb" style="color: #e8a33d;"></i>
+                <h3>Smart Recommendations</h3>
+            </div>
+            <button id="closeRecommendationPanelBtn" class="btn-icon" style="background:none; border:none; cursor:pointer; font-size:18px; color:#64748b;"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="panel-context" id="recommendationContext">
+            <div style="display: flex; gap: 15px; flex: 1;">
+                <div class="context-item"><i class="fas fa-calendar-day"></i> <span id="recDayContext">Monday</span></div>
+                <div class="context-item"><i class="fas fa-clock"></i> <span id="recPeriodContext">P3</span></div>
+                <div class="context-item"><i class="fas fa-users"></i> <span id="recClassContext">VI-A</span></div>
+            </div>
+            <button id="openManualEditBtn" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.8rem; display: flex; align-items: center; gap: 5px;">
+                <i class="fas fa-edit"></i> Manual Edit
+            </button>
+        </div>
+        <div class="panel-filters">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>Teacher</label>
+                    <select id="recTeacherFilter" class="form-control">
+                        <option value="all">All</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Subject</label>
+                    <select id="recSubjectFilter" class="form-control">
+                        <option value="all">All</option>
+                    </select>
+                </div>
+            </div>
+            <div class="checkbox-filters">
+                <label><input type="checkbox" id="recAvailableOnly"> Available Only</label>
+                <label><input type="checkbox" id="recPendingOnly"> Pending Only</label>
+                <label><input type="checkbox" id="recNoConflicts"> No Conflicts</label>
+            </div>
+        </div>
+        <div class="panel-content">
+            <div class="recommendation-tabs">
+                <div class="rec-tab active">Recommendations</div>
+                <div class="rec-tab disabled" title="Coming Soon">Swap Suggestions</div>
+            </div>
+            <div id="recommendationList" class="recommendation-list">
+                <!-- Cards will be injected here -->
             </div>
         </div>
     </div>
