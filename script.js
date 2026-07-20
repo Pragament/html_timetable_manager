@@ -389,6 +389,8 @@ function setupEventListeners() {
 
     document.getElementById( 'applyFilterBtn' ).addEventListener( 'click', renderTimetable );
     document.getElementById( 'checkOverlapsBtn' ).addEventListener( 'click', runOverlapCheckWithProgress );
+    document.getElementById( 'modifyShowConflictsBtn' )?.addEventListener( 'click', runModifyOverlapCheckWithProgress );
+
     document.getElementById( 'exportOverlapsBtn' ).addEventListener( 'click', exportOverlapsCSV );
     document.getElementById( 'exportTimetableBtn' ).addEventListener( 'click', exportTimetable );
     document.getElementById( 'goToUploadBtn' ).addEventListener( 'click', function () {
@@ -451,6 +453,10 @@ function setupEventListeners() {
     document.getElementById( 'closeEditCellModal' ).addEventListener( 'click', closeEditCellModal );
     document.getElementById( 'cancelEditCellBtn' ).addEventListener( 'click', closeEditCellModal );
     document.getElementById( 'saveEditCellBtn' ).addEventListener( 'click', saveCellEditFromModal );
+
+    document.getElementById( 'closeEditTeacherCellModal' ).addEventListener( 'click', closeEditTeacherCellModal );
+    document.getElementById( 'cancelEditTeacherCellBtn' ).addEventListener( 'click', closeEditTeacherCellModal );
+    document.getElementById( 'saveEditTeacherCellBtn' ).addEventListener( 'click', saveTeacherCellEditFromModal );
 
     // Teacher schedule
     document.getElementById( 'loadTeacherScheduleBtn' ).addEventListener( 'click', loadTeacherSchedule );
@@ -1818,14 +1824,7 @@ function toTeacherCSV( teachers ) {
     return csv.trim();
 }
 
-function toMappingCSV( mappings ) {
-    let csv = 'Teacher ID,Teacher Name,Grade-Section,Subject,Periods Per Week,Fixed Periods,Mode\n';
-    mappings.forEach( mapping => {
-        const modeVal = mapping.mode === '1' || mapping.mode === 'combined' ? '1' : ( mapping.mode === '0' || mapping.mode === 'individual' ? '0' : '' );
-        csv += [mapping.teacherId, mapping.teacherName, mapping.gradeSection, mapping.subject, mapping.periodsPerWeek, mapping.fixedPeriods || '', modeVal].map( escapeCsvField ).join( ',' ) + '\n';
-    } );
-    return csv.trim();
-}
+
 
 function renderAIPrompt() {
     const output = document.getElementById( 'aiPromptOutput' );
@@ -3377,9 +3376,7 @@ function isClassTeacherP1Task( task ) {
     return task.hasFixedPeriods && task.fixedPeriodGroups.some( group => group.length === 1 && group[0] === 1 );
 }
 
-function isCslLabTask( task ) {
-    return normalizeSubjectCode( task.subject ) === 'CSL';
-}
+
 
 function classHasP1P2LabOnDay( timetable, className, dayName ) {
     const p1 = getClassDayPeriod( timetable, className, dayName, 1 );
@@ -3424,31 +3421,7 @@ function canAssignFixedP1Slot( timetable, className, dayName, periodNumber, teac
 }
 
 /** Enumerate day/period combinations, optionally prioritising fixed period numbers. */
-function getSlotCandidates( className, preferredPeriodNumbers ) {
-    const schoolDays = getStandardDayOrder( className );
-    const periodsPerDay = state.config.periodsPerDay || 7;
-    const candidates = [];
-    const seen = new Set();
 
-    const pushCandidate = ( dayName, periodNumbers ) => {
-        const key = `${className}|${dayName}|${periodNumbers.join( '-' )}`;
-        if ( seen.has( key ) ) return;
-        seen.add( key );
-        candidates.push( { dayName, periodNumbers } );
-    };
-
-    if ( preferredPeriodNumbers && preferredPeriodNumbers.length > 0 ) {
-        schoolDays.forEach( dayName => pushCandidate( dayName, preferredPeriodNumbers ) );
-    }
-
-    schoolDays.forEach( dayName => {
-        for ( let periodNumber = 1; periodNumber <= periodsPerDay; periodNumber++ ) {
-            pushCandidate( dayName, [periodNumber] );
-        }
-    } );
-
-    return candidates;
-}
 
 function normalizeTeachingMode( value ) {
     const v = toCleanString( value ).toLowerCase();
@@ -5221,136 +5194,10 @@ function scheduleFixedCombinedTasks( timetable, tasks, deferredTasks, unschedule
     } );
 }
 
-function scheduleCombinedTask( timetable, task, unscheduled ) {
-    if ( task.alreadyScheduled ) return;
-    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    let remaining = task.periodsNeeded;
 
-    while ( remaining > 0 ) {
-        let best = findBestClubbedCandidateSlot(
-            timetable,
-            task,
-            maxTeacherPeriods,
-            [] // empty list generates 1-period slots
-        );
-
-        if ( !best ) break;
-
-        const blockHasLockedSlot = best.periodNumbers.some( periodNumber => {
-            return task.clubbedClasses.some( className => {
-                const period = getClassDayPeriod( timetable, className, best.dayName, periodNumber );
-                return period && period.isLocked;
-            } );
-        } );
-        if ( blockHasLockedSlot ) continue;
-
-        const assignmentId = `c-${task.mappingIndex}-${remaining}`;
-        task.clubbedClasses.forEach( ( className, idx ) => {
-            assignSlotWithTracking(
-                timetable,
-                className,
-                best.dayName,
-                best.periodNumbers,
-                task.teacherId,
-                task.subject,
-                task.teacherName,
-                assignmentId
-            );
-        } );
-
-        remaining -= best.periodNumbers.length;
-    }
-
-    if ( remaining > 0 ) {
-        unscheduled.push( {
-            className: task.isClubbed ? task.clubbedClasses.join( ';' ) : task.className,
-            subject: task.subject,
-            teacherId: task.teacherId,
-            periodsUnscheduled: remaining
-        } );
-    }
-}
 
 /** Score-based scheduling for regular (non-lab) subjects. */
-function scheduleNormalTask( timetable, task, unscheduled ) {
-    if ( task.alreadyScheduled ) return;
-    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    let remaining = task.periodsNeeded;
 
-    while ( remaining > 0 ) {
-        const best = findBestCandidateSlot(
-            timetable,
-            task,
-            null,
-            {},
-            maxTeacherPeriods,
-            null,
-            true
-        );
-
-        if ( !best ) {
-            const attemptNum = task.periodsNeeded - remaining + 1;
-            console.warn(`\n--- SCHEDULING FAILURE DIAGNOSTICS ---`);
-            console.warn(`Teacher: ${task.teacherId} (${task.teacherName})`);
-            console.warn(`Subject: ${task.subject}`);
-            console.warn(`Class: ${task.className}`);
-            console.warn(`Attempt #${attemptNum}`);
-            console.warn(`\nRejected:`);
-            
-            const schoolDays = getStandardDayOrder(task.className);
-            const periodsPerDay = state.config.periodsPerDay || 7;
-            schoolDays.forEach(dayName => {
-                for(let p = 1; p <= periodsPerDay; p++) {
-                    const validation = validateSlot(timetable, task.className, dayName, [p], task.teacherId, maxTeacherPeriods);
-                    if (!validation.valid) {
-                        console.warn(`${dayName} P${p} -> ${validation.reason}`);
-                    } else if (exceedsDailySubjectLimit(task.className, dayName, task.subject, 1, { isLabBlock: false })) {
-                        console.warn(`${dayName} P${p} -> Subject spread limit reached`);
-                    } else {
-                        const cell = getClassDayPeriod(timetable, task.className, dayName, p);
-                        if (cell && cell.isLocked) {
-                            console.warn(`${dayName} P${p} -> Cell is locked`);
-                        } else {
-                            console.warn(`${dayName} P${p} -> Unknown rejection (check forward check or MRV logic)`);
-                        }
-                    }
-                }
-            });
-            console.warn(`\nCandidates left = 0`);
-            console.warn(`--------------------------------------\n`);
-            break;
-        }
-
-        const slotHasLockedPeriod = best.periodNumbers.some( periodNumber => {
-            const period = getClassDayPeriod( timetable, task.className, best.dayName, periodNumber );
-            return period && period.isLocked;
-        } );
-        if ( slotHasLockedPeriod ) continue;
-
-        assignSlotWithTracking(
-            timetable,
-            task.className,
-            best.dayName,
-            best.periodNumbers,
-            task.teacherId,
-            task.subject,
-            task.teacherName
-        );
-        remaining -= 1;
-    }
-
-    if ( remaining > 0 ) {
-        unscheduled.push( {
-            className: task.className,
-            teacherId: task.teacherId,
-            teacherName: task.teacherName,
-            subject: task.subject,
-            periodsNeeded: task.periodsNeeded,
-            periodsScheduled: task.periodsNeeded - remaining,
-            periodsUnscheduled: remaining
-        } );
-    }
-}
 
 function saveGeneratedTimetable( timetable, unscheduled ) {
     state.stagedTimetableData = timetable;
@@ -5584,93 +5431,7 @@ function trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContex
     return false;
 }
 
-function fillRemainingEmptyTeachingSlots( timetable, unscheduled ) {
-    const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
-    const stillUnscheduled = [];
 
-    unscheduled.forEach( item => {
-        let remaining = Number( item.periodsUnscheduled || 0 );
-        if ( remaining <= 0 ) return;
-
-        if ( item.isFixedSlotTask ) {
-            stillUnscheduled.push( item );
-            return;
-        }
-
-        const retryTask = {
-            className: item.className,
-            teacherId: item.teacherId,
-            teacherName: item.teacherName,
-            subject: item.subject,
-            periodsNeeded: remaining,
-            isClubbed: false,
-            isLabSubject: typeof isCslSubject === 'function' ? isCslSubject( item.subject ) : normalizeSubjectCode( item.subject ) === 'CSL',
-            hasFixedPeriods: false,
-            fixedPeriodGroups: []
-        };
-
-        const attemptContext = { count: 0, max: state.config.maxSwapAttempts || 200, diagnostics: [] };
-
-        while ( remaining > 0 ) {
-            const best = findBestCandidateSlot(
-                timetable,
-                retryTask,
-                null,
-                { preferFixedPeriods: false, isLabBlock: false },
-                maxTeacherPeriods,
-                null,
-                true
-            );
-
-            if ( !best ) {
-                if ( trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContext ) ) {
-                    remaining -= 1;
-                    continue;
-                }
-                break;
-            }
-
-            const periodEntry = getClassDayPeriod(
-                timetable,
-                retryTask.className,
-                best.dayName,
-                best.periodNumbers[0]
-            );
-
-            if ( !periodEntry || periodEntry.isLocked || periodEntry.type === 'Break' ) {
-                if ( trySwapAndPlace( timetable, retryTask, maxTeacherPeriods, attemptContext ) ) {
-                    remaining -= 1;
-                    continue;
-                }
-                break;
-            }
-
-            assignSlotWithTracking(
-                timetable,
-                retryTask.className,
-                best.dayName,
-                best.periodNumbers,
-                retryTask.teacherId,
-                retryTask.subject,
-                retryTask.teacherName
-            );
-
-            remaining -= best.periodNumbers.length;
-        }
-
-        if ( remaining > 0 ) {
-            stillUnscheduled.push( {
-                ...item,
-                periodsScheduled: Number( item.periodsNeeded || 0 ) - remaining,
-                periodsUnscheduled: remaining,
-                reason: 'Could not fill all teaching slots after final retry',
-                diagnostics: attemptContext.diagnostics
-            } );
-        }
-    } );
-
-    return stillUnscheduled;
-}
 
 function findBestCandidateForSingleCell(timetable, className, dayName, period, tasks) {
   const maxTeacherPeriods = state.config.periodsPerTeacher || 35;
@@ -5738,41 +5499,7 @@ function fillAllEmptyPeriods( timetable, remainingTasks ) {
     return remainingTasks.filter( t => t.periodsUnscheduled > 0 );
 }
 
-function showTimetableAuditFailure(auditErrors) {
-  const overlay = document.createElement('div');
-  overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-  const modal = document.createElement('div');
-  modal.style = 'background:white;padding:20px;border-radius:8px;max-width:600px;width:90%;max-height:90vh;overflow-y:auto;font-family:sans-serif;';
-  const errorSummary = auditErrors.slice(0, 5).map(e => `<li style="margin-bottom:8px;"><strong>${e.code}</strong>: ${e.message}</li>`).join('');
-  modal.innerHTML = `
-    <h3 style="color:#d32f2f;margin-top:0;">Timetable Audit Failed</h3>
-    <p>Generation completed, but critical integrity checks failed. The live timetable has NOT been overwritten.</p>
-    <ul style="background:#ffebee;padding:15px 15px 15px 30px;border-radius:4px;font-size:14px;">${errorSummary}</ul>
-    ${auditErrors.length > 5 ? `<p style="font-size:14px;">...and ${auditErrors.length - 5} more issues.</p>` : ''}
-    <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
-      <button id="btnAbortAudit" class="btn btn-secondary" style="padding:8px 16px;">Abort</button>
-      <button id="btnDownloadAudit" class="btn btn-primary" style="padding:8px 16px;">Download Report</button>
-    </div>
-  `;
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
 
-  document.getElementById('btnAbortAudit').onclick = () => {
-    state.stagedTimetableData = null;
-    document.body.removeChild(overlay);
-  };
-
-  document.getElementById('btnDownloadAudit').onclick = () => {
-    const csvContent = 'data:text/csv;charset=utf-8,' + ['Code,Message', ...auditErrors.map(e => `${e.code},${e.message.replace(/,/g, ' ')}`)].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', 'audit-conflict-report.csv');
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  };
-}
 
 function auditTimetableIntegrity( timetable ) {
     const errors = [];
@@ -7087,6 +6814,12 @@ function updateClassFilters() {
 
     // 3. Populate teacherFilter and subjectFilter (and teacherScheduleFilter with teachers)
     const teachers = new Set();
+    
+    // Add all teachers from the master list
+    ( state.teachers || [] ).forEach( t => {
+        if ( t && t.name ) teachers.add( toCleanString( t.name ) );
+    } );
+    
     Object.keys( state.timetableData ).forEach( className => {
         const classData = state.timetableData[className];
         if ( classData && classData.days ) {
@@ -7352,8 +7085,9 @@ function renderTeacherTimetableHTML( teacherFilters ) {
             } );
         } );
 
-        if ( !hasAnyEntry ) {
-            return `<div class="empty-state"><p>No schedule found for teacher: ${escapeHtml(teacherFilter)}</p></div>`;
+        // If there are no entries, still render the grid so the user can assign classes
+        if ( !hasAnyEntry && maxPeriods === 0 ) {
+            return `<div class="empty-state"><p>No schedule found for teacher: ${escapeHtml(teacherFilter)} and no classes exist to assign.</p></div>`;
         }
 
         let maxPeriodsArray = Array.from({length: maxPeriods}, (_, i) => i + 1);
@@ -7375,9 +7109,11 @@ function renderTeacherTimetableHTML( teacherFilters ) {
 
                     periodInfo = `<div class="period-subject">${periodText}</div>`;
                 }
-
-                return `<td class="period-cell">${periodInfo}</td>`;
+                
+                const editIconHtml = `<div class="cell-edit-icon teacher-cell-edit-icon"><i class="fas fa-edit"></i></div>`;
+                return `<td class="period-cell" data-teacher="${escapeHtml(teacherFilter)}" data-day="${dayName}" data-period="${p}">${periodInfo}${editIconHtml}</td>`;
             }).join('');
+
 
             return `<tr><td style="font-weight: 600; background-color: #f9f9f9;">${dayName}</td>${rowCells}</tr>`;
         }).join('');
@@ -7544,7 +7280,7 @@ async function checkForOverlaps() {
         const period = current.period;
 
         if ( period.teacherName && period.teacherName !== '' && period.subject ) {
-            const key = `${current.dayName}-${period.time}-${period.teacherName}`;
+            const key = `${current.dayName}-P${current.periodNumber}-${period.teacherName}`;
             if ( !teacherSchedule.has( key ) ) {
                 teacherSchedule.set( key, [] );
             }
@@ -7640,6 +7376,35 @@ async function runOverlapCheckWithProgress() {
     }
 }
 
+async function runModifyOverlapCheckWithProgress() {
+    if ( !state.timetableData ) {
+        alert( "No timetable data loaded." );
+        return;
+    }
+
+    if ( state.overlapCheckInProgress ) return;
+    state.overlapCheckInProgress = true;
+
+    const checkBtn = document.getElementById( 'modifyShowConflictsBtn' );
+    let originalLabel = '';
+    if (checkBtn) {
+        originalLabel = checkBtn.innerHTML;
+        checkBtn.disabled = true;
+        checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+    }
+
+    try {
+        await checkForOverlaps();
+        loadTimetableForModification(true);
+    } finally {
+        if (checkBtn) {
+            checkBtn.disabled = false;
+            checkBtn.innerHTML = originalLabel;
+        }
+        state.overlapCheckInProgress = false;
+        setTimeout( () => updateOverlapProgress( '', 0, false ), 900 );
+    }
+}
 
 async function exportOverlapsCSV() {
     if ( !state.timetableData ) {
@@ -8193,7 +7958,10 @@ function loadTimetableForModification(silent = false) {
             return;
         }
         modifyTimetableDisplay.innerHTML = renderTeacherTimetableHTML( [teacherFilter] );
+        addTeacherEditListeners(); // ADD THIS
+        updateModifyActionsState(); // ADD THIS
     } else if (viewMode === 'subject') {
+
         const subjectFilter = document.getElementById( 'modifySubjectFilter' ).value;
         if ( !subjectFilter ) {
             if (!silent) alert( "Please select a subject to load." );
@@ -8617,6 +8385,156 @@ function saveCellEditFromModal() {
         renderTimetable();
     }
 }
+
+function addTeacherEditListeners() {
+    const icons = document.querySelectorAll( '.teacher-cell-edit-icon' );
+    icons.forEach( icon => {
+        icon.removeEventListener( 'click', handleTeacherPeriodEditClick );
+        icon.addEventListener( 'click', handleTeacherPeriodEditClick );
+    } );
+}
+
+function handleTeacherPeriodEditClick( event ) {
+    event.stopPropagation();
+    const cell = event.currentTarget.closest('.period-cell');
+    if (!cell) return;
+    
+    const teacherName = cell.getAttribute( 'data-teacher' );
+    const dayName = cell.getAttribute( 'data-day' );
+    const periodNum = parseInt( cell.getAttribute( 'data-period' ) );
+
+    openTeacherEditCellModal( teacherName, dayName, periodNum );
+}
+
+function openTeacherEditCellModal( teacherName, dayName, periodNum ) {
+    document.getElementById( 'editTeacherModalTeacher' ).textContent = teacherName;
+    document.getElementById( 'editTeacherModalDay' ).textContent = dayName;
+    document.getElementById( 'editTeacherModalPeriod' ).textContent = `Period ${periodNum}`;
+    
+    // Find current assignments for this teacher on this day/period
+    let currentClasses = [];
+    let currentSubjects = [];
+    Object.keys( state.timetableData || {} ).forEach( className => {
+        const classData = state.timetableData[className];
+        const dayData = classData.days.find( d => d.dayName === dayName );
+        if (dayData) {
+            const periodData = dayData.periods.find( p => p.period === periodNum );
+            if (periodData && periodData.teacherName === teacherName) {
+                currentClasses.push(classData.className || className);
+                if (periodData.subject && !currentSubjects.includes(periodData.subject)) {
+                    currentSubjects.push(periodData.subject);
+                }
+            }
+        }
+    });
+
+    document.getElementById( 'editTeacherModalCurrent' ).textContent = currentClasses.length > 0 ? currentClasses.join(', ') : 'None';
+    
+    const modal = document.getElementById( 'editTeacherCellModal' );
+    modal.dataset.teacher = teacherName;
+    modal.dataset.day = dayName;
+    modal.dataset.period = periodNum;
+    
+    const classSelect = document.getElementById( 'editTeacherModalClassSelect' );
+    classSelect.innerHTML = '<option value="">Select Class (Clear)</option>';
+    
+    const classNames = Object.keys(state.timetableData || {}).sort();
+    classNames.forEach( className => {
+        const classData = state.timetableData[className];
+        const option = document.createElement( 'option' );
+        option.value = className;
+        option.textContent = classData.className || className;
+        // Preselect if they only have one class, or just preselect the first
+        if (currentClasses.length === 1 && (classData.className === currentClasses[0] || className === currentClasses[0])) {
+            option.selected = true;
+        }
+        classSelect.appendChild( option );
+    });
+
+    const subjectSelect = document.getElementById( 'editTeacherModalSubjectSelect' );
+    subjectSelect.innerHTML = '<option value="">Select Subject</option>';
+    
+    const uniqueSubjects = Array.from( getUniqueSubjectMap().entries() ).sort( ( a, b ) => safeLocaleCompare( a[1], b[1] ) );
+    uniqueSubjects.forEach( ([subCode, subName]) => {
+        const option = document.createElement( 'option' );
+        option.value = subCode;
+        option.textContent = subCode === subName ? subCode : `${subCode} - ${subName}`;
+        if (currentSubjects.includes(subCode)) {
+            option.selected = true;
+        }
+        subjectSelect.appendChild( option );
+    });
+
+    modal.classList.add( 'active' );
+}
+
+function closeEditTeacherCellModal() {
+    document.getElementById( 'editTeacherCellModal' ).classList.remove( 'active' );
+}
+
+function saveTeacherCellEditFromModal() {
+    const modal = document.getElementById( 'editTeacherCellModal' );
+    const teacherName = modal.dataset.teacher;
+    const dayName = modal.dataset.day;
+    const periodNum = parseInt( modal.dataset.period );
+
+    const selectedClass = document.getElementById( 'editTeacherModalClassSelect' ).value;
+    const selectedSubject = document.getElementById( 'editTeacherModalSubjectSelect' ).value;
+
+    const teacherId = findTeacherIdByName(teacherName) || '';
+
+    // If changing class, remove teacher from previous class(es) for this period
+    Object.keys( state.timetableData || {} ).forEach( className => {
+        const classData = state.timetableData[className];
+        const dayData = classData.days.find( d => d.dayName === dayName );
+        if (dayData) {
+            const periodData = dayData.periods.find( p => p.period === periodNum );
+            if (periodData && periodData.teacherName === teacherName) {
+                // If it's not the selected class, we unassign them
+                if (className !== selectedClass) {
+                    periodData.teacherName = '';
+                    periodData.teacherId = '';
+                    periodData.subject = ''; // Optionally clear subject as well when teacher is unassigned
+                    
+                    const cellKey = `${className}|${dayName}|${periodNum}`;
+                    if ( !state.editedCells ) state.editedCells = {};
+                    state.editedCells[cellKey] = true;
+                }
+            }
+        }
+    });
+
+    // Assign to new class
+    if (selectedClass) {
+        const classData = state.timetableData[selectedClass];
+        const dayData = classData.days.find( d => d.dayName === dayName );
+        if (dayData) {
+            const periodData = dayData.periods.find( p => p.period === periodNum );
+            if (periodData) {
+                // Warning if the class already has a teacher
+                if (periodData.teacherName && periodData.teacherName !== teacherName) {
+                    const proceed = confirm( `Class ${classData.className} is already assigned to ${periodData.teacherName} on this period.\n\nDo you want to overwrite?` );
+                    if (!proceed) return;
+                }
+
+                periodData.teacherName = teacherName;
+                periodData.teacherId = teacherId;
+                periodData.subject = selectedSubject;
+                
+                const cellKey = `${selectedClass}|${dayName}|${periodNum}`;
+                if ( !state.editedCells ) state.editedCells = {};
+                state.editedCells[cellKey] = true;
+            }
+        }
+    }
+
+    closeEditTeacherCellModal();
+    loadTimetableForModification(true);
+    if (typeof renderTimetable === 'function') {
+        renderTimetable();
+    }
+}
+
 
 function undoLastCellEdit() {
     if ( !state.lastEdit ) return;
@@ -9922,18 +9840,39 @@ function applyRecommendation(subject, teacherId, teacherName) {
     const periodData = dayData.periods.find(p => p.period === periodNum);
     if (!periodData) return;
     
+    const cellKey = `${className}|${dayName}|${periodNum}`;
+    const wasPreviouslyEdited = !!( state.editedCells && state.editedCells[cellKey] );
+
+    // Store previous value for one-level Undo
+    state.lastEdit = {
+        className: className,
+        dayName: dayName,
+        periodNum: periodNum,
+        subject: periodData.subject || '',
+        teacherId: periodData.teacherId || '',
+        teacherName: periodData.teacherName || '',
+        wasEdited: wasPreviouslyEdited
+    };
+    
     periodData.subject = subject;
     periodData.teacherId = teacherId || findTeacherIdByName(teacherName);
     periodData.teacherName = teacherName || findTeacherNameById(teacherId);
     
+    // Mark as edited
+    if ( !state.editedCells ) state.editedCells = {};
+    state.editedCells[cellKey] = true;
+    
     loadTimetableForModification(true);
     refreshRecommendations();
     
-    // Enable save buttons
+    // Enable save and undo buttons
     const saveAllChangesBtn = document.getElementById( 'saveAllChangesBtn' );
     const cancelAllChangesBtn = document.getElementById( 'cancelAllChangesBtn' );
+    const undoBtn = document.getElementById( 'undoBtn' );
+    
     if (saveAllChangesBtn) saveAllChangesBtn.disabled = false;
     if (cancelAllChangesBtn) cancelAllChangesBtn.disabled = false;
+    if (undoBtn) undoBtn.disabled = false;
     
     state.hasUnsavedChanges = true;
 }
