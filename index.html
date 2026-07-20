@@ -45,6 +45,9 @@
             <div class="tab" data-target="teacher-schedule-section">
                 <i class="fas fa-chalkboard-teacher"></i> Teacher Schedule
             </div>
+            <div class="tab" data-target="manual-builder-section">
+                <i class="fas fa-cog"></i> Manual Builder
+            </div>
         </div>
 
         <!-- Setup Section -->
@@ -475,7 +478,7 @@
                         <div class="value" id="teachersCount">0</div>
                     </div>
                     <div class="summary-card">
-                        <h3>Subjects</h3>
+                        <h3>Subjects</h3>   
                         <div class="value" id="subjectsCount">0</div>
                     </div>
                 </div>
@@ -489,6 +492,9 @@
                 <div class="section-actions">
                     <button class="btn btn-primary" id="rescheduleModeBtn">
                         <i class="fas fa-exchange-alt"></i> Reschedule Mode
+                    </button>
+                    <button class="btn btn-warning" id="modifyShowConflictsBtn">
+                        <i class="fas fa-exclamation-triangle"></i> Show Conflicts
                     </button>
                     <button class="btn btn-success" id="exportFromModifyBtn">
                         <i class="fas fa-file-export"></i> Export Timetable
@@ -510,7 +516,7 @@
                 <label for="modifyViewMode" style="font-weight: 600;">View Mode:</label>
                 <select id="modifyViewMode" class="form-control" style="width: auto;">
                     <option value="class">Class-wise</option>
-                    <option value="teacher">Teacher-wise (View Only)</option>
+                    <option value="teacher">Teacher-wise</option>
                     <option value="subject">Subject-wise (View Only)</option>
                 </select>
                 
@@ -584,6 +590,43 @@
                         <p>Select a teacher to view their schedule.</p>
                     </div>
                 </div>
+            </div>
+        </div>
+        
+        <!-- Manual Builder Section -->
+        <div class="content-section" id="manual-builder-section" style="background: #f4f6f8; padding: 20px;">
+            <div class="section-header" style="margin-bottom: 20px;">
+                <h2><i class="fas fa-cog"></i> Manual Timetable Builder</h2>
+                <div class="section-actions" style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn btn-primary" id="mbPushBtn" style="background: #27ae60; border-color: #27ae60;">
+                        <i class="fas fa-upload"></i> Use in App
+                    </button>
+                    <button class="btn btn-secondary" id="mbExportBtn">
+                        <i class="fas fa-file-excel"></i> Export Excel
+                    </button>
+                    <button class="btn btn-warning" id="mbClearBtn">
+                        <i class="fas fa-trash"></i> Clear Data
+                    </button>
+                </div>
+            </div>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 20px; display: flex; gap: 20px; align-items: center;">
+                <div>
+                    <label style="font-weight: 600; font-size: 13px; color: #34495e; margin-right: 8px;">Periods/day:</label>
+                    <input type="number" id="mbPeriodsInput" min="1" max="15" value="7" style="width: 60px; padding: 6px; border: 1px solid #dcdde1; border-radius: 4px; text-align: center;">
+                </div>
+                <div>
+                    <label style="font-weight: 600; font-size: 13px; color: #34495e; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="mbApplyAllDays" style="width: 16px; height: 16px;"> Apply to all days
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: start;">
+                <div style="background: white; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <div id="mbGridWrap" style="max-height: 700px; overflow-y: auto;"></div>
+                </div>
+                <div id="mbStatsSidebar"></div>
             </div>
         </div>
         
@@ -711,6 +754,45 @@
             </div>
         </div>
     </div>
+
+    <!-- Edit Teacher Cell Modal -->
+    <div class="modal" id="editTeacherCellModal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Assign Class to Teacher</h3>
+                <button class="close-modal" id="closeEditTeacherCellModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="background-color: #f5f7ff; border: 1px solid #e1e7ff; border-radius: 6px; padding: 15px; margin-bottom: 20px;">
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.95rem;">
+                        <div><strong>Teacher:</strong> <span id="editTeacherModalTeacher">-</span></div>
+                        <div><strong>Day:</strong> <span id="editTeacherModalDay">-</span></div>
+                        <div><strong>Period:</strong> <span id="editTeacherModalPeriod">-</span></div>
+                        <div style="grid-column: span 2;"><strong>Current Assignment:</strong> <span id="editTeacherModalCurrent">-</span></div>
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="editTeacherModalClassSelect">Select Class</label>
+                    <select id="editTeacherModalClassSelect" class="form-control">
+                        <option value="">Select Class (Clear)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="editTeacherModalSubjectSelect">Select Subject</label>
+                    <select id="editTeacherModalSubjectSelect" class="form-control">
+                        <option value="">Select Subject</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelEditTeacherCellBtn">Cancel</button>
+                <button class="btn btn-success" id="saveEditTeacherCellBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Smart Assignment Recommendations Panel -->
     <div id="recommendationPanel" class="recommendation-panel">
         <div class="panel-header">
@@ -763,5 +845,6 @@
     </div>
     
     <script src="script.js?v=3"></script>
+    <script src="manual-builder.js?v=1"></script>
 </body>
 </html>
