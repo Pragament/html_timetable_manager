@@ -463,6 +463,11 @@ function mbExportToExcel() {
         });
     });
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    
+    // Add padding (styling)
+    ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 25 }];
+    ws['!rows'] = rows.map(() => ({ hpt: 25 }));
+    
     XLSX.utils.book_append_sheet(wb, ws, 'All Data');
 
     // Per-class sheets
@@ -478,6 +483,12 @@ function mbExportToExcel() {
             clsRows.push(row);
         }
         const clsWs = XLSX.utils.aoa_to_sheet(clsRows);
+        
+        const cols = [{ wch: 10 }];
+        mbState.activeDays.forEach(() => cols.push({ wch: 25 }));
+        clsWs['!cols'] = cols;
+        clsWs['!rows'] = clsRows.map(() => ({ hpt: 35 }));
+        
         XLSX.utils.book_append_sheet(wb, clsWs, cls.replace(/[\\/*?[\]]/g, '_').substring(0, 31));
     });
 

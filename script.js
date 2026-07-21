@@ -7572,6 +7572,16 @@ function exportToExcel() {
     } );
 
     const ws = XLSX.utils.aoa_to_sheet( data );
+    
+    // Add some padding to columns and rows for better visibility
+    const cols = [{ wch: 15 }]; // First column (Days)
+    const numPeriods = state.config?.periodsPerDay || 8;
+    for (let i = 0; i < numPeriods * 2; i++) {
+        cols.push({ wch: 25 });
+    }
+    ws['!cols'] = cols;
+    ws['!rows'] = data.map(() => ({ hpt: 35 })); // Taller rows
+    
     XLSX.utils.book_append_sheet( wb, ws, "Timetable" );
 
     let maxPeriods = 0;
@@ -7622,7 +7632,12 @@ function exportToExcel() {
             teacherMasterData.push([]); // Gap between sections
         }
     });
-    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( teacherMasterData ), "All Teachers" );
+    const teacherWs = XLSX.utils.aoa_to_sheet( teacherMasterData );
+    const tCols = [{ wch: 20 }, { wch: 15 }];
+    for (let i = 0; i < maxPeriods; i++) tCols.push({ wch: 25 });
+    teacherWs['!cols'] = tCols;
+    teacherWs['!rows'] = teacherMasterData.map(() => ({ hpt: 35 }));
+    XLSX.utils.book_append_sheet( wb, teacherWs, "All Teachers" );
 
     // Subject-wise Master Sheet
     const subjectGrid = {};
@@ -7665,7 +7680,12 @@ function exportToExcel() {
             subjectMasterData.push([]); // Gap between sections
         }
     });
-    XLSX.utils.book_append_sheet( wb, XLSX.utils.aoa_to_sheet( subjectMasterData ), "All Subjects" );
+    const subjectWs = XLSX.utils.aoa_to_sheet( subjectMasterData );
+    const sCols = [{ wch: 20 }, { wch: 15 }];
+    for (let i = 0; i < maxPeriods; i++) sCols.push({ wch: 25 });
+    subjectWs['!cols'] = sCols;
+    subjectWs['!rows'] = subjectMasterData.map(() => ({ hpt: 35 }));
+    XLSX.utils.book_append_sheet( wb, subjectWs, "All Subjects" );
 
     // Generate and download file
     XLSX.writeFile( wb, 'school_timetable_export.xlsx' );
